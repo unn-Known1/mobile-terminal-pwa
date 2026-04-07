@@ -740,6 +740,37 @@ kbd {
 .backup-buttons button { flex: 1; padding: 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--text-primary); }
 .backup-buttons button:hover { background: var(--bg-primary); }
 
+/* Command History */
+.history-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+}
+.history-info p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-family: 'Fira Code', monospace;
+}
+.history-info .danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #EF4444;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.history-info .danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
 /* Tab Status Bubbles */
 .status-bubble { width: 8px; height: 8px; border-radius: 50%; margin-left: 4px; flex-shrink: 0; }
 .status-bubble.running { background: #22C55E; animation: pulse 1s infinite; }

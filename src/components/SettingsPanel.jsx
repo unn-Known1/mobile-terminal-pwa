@@ -83,6 +83,28 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
     catch { return [] }
   })
 
+  // Command history state
+  const [commandHistory, setCommandHistory] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('terminal-command-history') || '[]')
+    } catch { return [] }
+  })
+
+  useEffect(() => {
+    const handleStorage = () => {
+      try {
+        setCommandHistory(JSON.parse(localStorage.getItem('terminal-command-history') || '[]'))
+      } catch {}
+    }
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [])
+
+  const clearCommandHistory = () => {
+    localStorage.removeItem('terminal-command-history')
+    setCommandHistory([])
+  }
+
   const addShortcut = (s) => {
     const newShortcuts = [...shortcuts, { ...s, id: Date.now().toString() }]
     setShortcuts(newShortcuts)
@@ -116,6 +138,8 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
   const handleImport = () => {
     const input = document.createElement('input')
     input.type = 'file'
+    input.id = 'settings-import'
+    input.name = 'settings-import'
     input.accept = '.json'
     input.onchange = async (e) => {
       const file = e.target.files?.[0]
@@ -210,8 +234,8 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
             </div>
           </div>
           <div className="setting-item">
-            <label>Theme</label>
-            <select value={theme} onChange={e => changeTheme(e.target.value)}>
+            <label htmlFor="theme-select">Theme</label>
+            <select id="theme-select" name="theme-select" value={theme} onChange={e => changeTheme(e.target.value)}>
               {Object.entries(THEMES).map(([k, v]) => (
                 <option key={k} value={k}>{v.label}</option>
               ))}
@@ -238,6 +262,14 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
         </div>
 
         <div className="panel-section">
+          <h3>Command History</h3>
+          <div className="history-info">
+            <p>{commandHistory.length} commands saved</p>
+            <button onClick={clearCommandHistory} className="danger">Clear History</button>
+          </div>
+        </div>
+
+        <div className="panel-section">
           <h3>Tunnel (cloudflared)</h3>
           <div className="setting-item">
             <label>Status</label>
@@ -254,7 +286,7 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
           {tunnelStatus === 'connected' && (
             <>
               <div className="tunnel-url">
-                <input type="text" value={tunnelUrl} readOnly />
+                <input type="text" id="tunnel-url" name="tunnel-url" value={tunnelUrl} readOnly aria-label="Tunnel URL" />
                 <button className="copy-btn" onClick={handleCopyUrl} aria-label="Copy URL">
                   {copied ? <Check size={14} /> : <Copy size={14} />}
                 </button>
@@ -310,8 +342,8 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
         <div className="panel-section">
           <h3>Notifications</h3>
           <div className="setting-item">
-            <label>
-              <input type="checkbox" onChange={() => {
+            <label htmlFor="notif-long-running">
+              <input type="checkbox" id="notif-long-running" name="notif-long-running" onChange={() => {
                 const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
                 s.longRunning = !s.longRunning
                 localStorage.setItem('terminal-notifications', JSON.stringify(s))
@@ -319,8 +351,8 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
             </label>
           </div>
           <div className="setting-item">
-            <label>
-              <input type="checkbox" onChange={() => {
+            <label htmlFor="notif-idle">
+              <input type="checkbox" id="notif-idle" name="notif-idle" onChange={() => {
                 const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
                 s.idle = !s.idle
                 localStorage.setItem('terminal-notifications', JSON.stringify(s))
@@ -328,8 +360,8 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
             </label>
           </div>
           <div className="setting-item">
-            <label>
-              <input type="checkbox" onChange={() => {
+            <label htmlFor="notif-background">
+              <input type="checkbox" id="notif-background" name="notif-background" onChange={() => {
                 const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
                 s.background = !s.background
                 localStorage.setItem('terminal-notifications', JSON.stringify(s))
@@ -337,8 +369,8 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
             </label>
           </div>
           <div className="setting-item">
-            <label>
-              <input type="checkbox" onChange={() => {
+            <label htmlFor="notif-failed">
+              <input type="checkbox" id="notif-failed" name="notif-failed" onChange={() => {
                 const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
                 s.failed = !s.failed
                 localStorage.setItem('terminal-notifications', JSON.stringify(s))
