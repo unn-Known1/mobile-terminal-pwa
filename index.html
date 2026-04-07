@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#1a1a1a" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>Terminal</title>
+  <script>
+    // Store token from URL if present
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    if (token) {
+      sessionStorage.setItem('tunnel-token', token);
+      // Clean URL
+      window.history.replaceState({}, document.title, '/');
+    }
+    // Add token to cookie for all requests if we have a token
+    (() => {
+      const storedToken = sessionStorage.getItem('tunnel-token');
+      if (storedToken) {
+        // Set cookie that will be sent with all requests
+        document.cookie = `tunnel_token=${storedToken}; path=/; SameSite=Strict`;
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+          const [url, options] = args;
+          if (typeof url === 'string' && !url.startsWith('http')) {
+            return originalFetch(url, {
+              ...options,
+              credentials: 'include',
+              headers: { ...options?.headers, 'x-tunnel-token': storedToken }
+            });
+          }
+          return originalFetch(...args);
+        };
+      }
+    })();
+    // Service worker - only register if we have a token
+    if ('serviceWorker' in navigator && sessionStorage.getItem('tunnel-token')) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

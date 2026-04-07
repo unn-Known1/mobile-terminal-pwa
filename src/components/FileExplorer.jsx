@@ -96,6 +96,12 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
     clearSelection()
   }
 
+  const handleMultiRename = () => {
+    if (selectedItems.length === 0) return
+    setModal({ type: 'multi-rename', items: selectedItems })
+    setModalInput('')
+  }
+
   useEffect(() => {
     if (isOpen && currentPath) fetchDirectory(currentPath)
   }, [isOpen, currentPath])
@@ -250,6 +256,23 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
         setModal({ type: null, item: null })
         fetchDirectory(currentPath)
       } catch (err) { alert(err.message) }
+    } else if (modal.type === 'multi-rename' && modal.items) {
+      try {
+        for (let i = 0; i < modal.items.length; i++) {
+          const item = modal.items[i]
+          const ext = item.name.includes('.') ? '.' + item.name.split('.').pop() : ''
+          const base = ext ? item.name.replace(ext, '') : item.name
+          const newName = `${base}-${i + 1}${ext}`
+          await fetch('/api/file/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ oldPath: item.path, newName })
+          })
+        }
+        setModal({ type: null, item: null })
+        clearSelection()
+        fetchDirectory(currentPath)
+      } catch (err) { alert(err.message) }
     }
   }
 
@@ -305,6 +328,9 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
             </button>
             <button className="icon-btn-sm" onClick={handleMultiCut} title="Cut selected">
               <Scissors size={14} />
+            </button>
+            <button className="icon-btn-sm" onClick={handleMultiRename} title="Batch rename">
+              <Edit3 size={14} />
             </button>
             <button className="icon-btn-sm" onClick={handleMultiDelete} title="Delete selected">
               <Trash2 size={14} />
@@ -396,11 +422,32 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
         </div>
       )}
 
-      {modal.type && (
+      {modal.type === 'multi-rename' && (
         <div className="modal-overlay" onClick={() => setModal({ type: null, item: null })}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{modal.type === 'rename' ? `Rename ${modal.item?.name}` : 'Create New File'}</h3>
+              <h3>Batch Rename ({modal.items?.length} files)</h3>
+              <button onClick={() => setModal({ type: null, item: null })}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <p>Rename as: <code>{'{name}-{index}'}</code></p>
+              <p className="hint">Example: file-1.txt, file-2.txt</p>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setModal({ type: null, item: null })}>Cancel</button>
+              <button className="primary" onClick={submitModal}>
+                <Check size={14} /> Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal.type === 'rename' && (
+        <div className="modal-overlay" onClick={() => setModal({ type: null, item: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Rename {modal.item?.name}</h3>
               <button onClick={() => setModal({ type: null, item: null })}><X size={16} /></button>
             </div>
             <div className="modal-body">
@@ -408,7 +455,7 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
                 type="text" 
                 value={modalInput} 
                 onChange={e => setModalInput(e.target.value)} 
-                placeholder={modal.type === 'rename' ? 'New name' : 'Filename'}
+                placeholder="New name"
                 autoFocus
                 onKeyDown={e => e.key === 'Enter' && submitModal()}
               />
@@ -416,7 +463,34 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
             <div className="modal-footer">
               <button onClick={() => setModal({ type: null, item: null })}>Cancel</button>
               <button className="primary" onClick={submitModal}>
-                <Check size={14} /> {modal.type === 'rename' ? 'Rename' : 'Create'}
+                <Check size={14} /> Rename
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal.type === 'create' && (
+        <div className="modal-overlay" onClick={() => setModal({ type: null, item: null })}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Create New File</h3>
+              <button onClick={() => setModal({ type: null, item: null })}><X size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <input 
+                type="text" 
+                value={modalInput} 
+                onChange={e => setModalInput(e.target.value)} 
+                placeholder="Filename"
+                autoFocus
+                onKeyDown={e => e.key === 'Enter' && submitModal()}
+              />
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setModal({ type: null, item: null })}>Cancel</button>
+              <button className="primary" onClick={submitModal}>
+                <Check size={14} /> Create
               </button>
             </div>
           </div>
