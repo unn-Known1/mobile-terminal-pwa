@@ -5,14 +5,16 @@ import { SearchAddon } from 'xterm-addon-search'
 import { WebLinksAddon } from 'xterm-addon-web-links'
 import 'xterm/css/xterm.css'
 import { useSocket } from '../hooks/useSocket'
+import { useCommandHistory } from '../hooks/useCommandHistory'
 import MobileKeyboard from './MobileKeyboard'
 
 export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, onStatusChange }) {
   const containerRef = useRef(null)
   const termRef = useRef(null)
   const fitAddonRef = useRef(null)
-  const [lastActivity, setLastActivity] = useState(Date.now())
-  const { socket, connected } = useSocket('/')
+   const [lastActivity, setLastActivity] = useState(Date.now())
+   const { socket, connected } = useSocket('/')
+   const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
 
   // Initial terminal setup
   useEffect(() => {
@@ -42,6 +44,15 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     term.loadAddon(searchAddon)
     term.loadAddon(webLinksAddon)
     term.open(containerRef.current)
+
+    // Add id and name to xterm's hidden textarea to satisfy autofill/accessibility checks
+    // The textarea is used for mobile input capture and is created by xterm.js
+    const textarea = containerRef.current.querySelector('textarea')
+    if (textarea && !textarea.id) {
+      const taId = `xterm-textarea-${sessionId || Math.random().toString(36).substr(2, 9)}`
+      textarea.id = taId
+      textarea.name = taId
+    }
     
     // Delay fit to ensure viewport is ready
     const doFit = () => {
@@ -52,8 +63,11 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     setTimeout(doFit, 100)
     setTimeout(doFit, 300)
 
-    termRef.current = term
-    fitAddonRef.current = fitAddon
+     termRef.current = term
+     fitAddonRef.current = fitAddon
+
+     // Command history buffer
+     let commandBuffer = ''
 
     const onResize = () => {
       if (containerRef.current?.offsetWidth > 0) {
@@ -66,10 +80,47 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
 
     // Ctrl+F → search
     term.attachCustomKeyEventHandler(e => {
-      if (e.ctrlKey && e.key === 'f' && e.type === 'keydown') {
-        const query = window.prompt('Search:')
-        if (query) searchAddon.findNext(query)
-        return false
+      if (e.type === 'keydown') {
+        // Search: Ctrl+F
+        if (e.ctrlKey && e.key === 'f') {
+          const query = window.prompt('Search:')
+          if (query) searchAddon.findNext(query)
+          return false
+        }
+
+        // Enter key: submit command
+        if (e.key === 'Enter') {
+          if (commandBuffer.trim()) {
+            addToHistory(commandBuffer)
+          }
+          commandBuffer = ''
+          return true // allow newline to be sent to pty
+        }
+
+        // Arrow Up: previous command in history
+        if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          const prev = getPrevious()
+          if (prev) {
+            term.write('\r\x1b[K' + prev)
+            commandBuffer = prev
+          }
+          return false
+        }
+
+        // Arrow Down: next command in history
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          const next = getNext()
+          if (next) {
+            term.write('\r\x1b[K' + next)
+            commandBuffer = next
+          } else {
+            term.write('\r\x1b[K')
+            commandBuffer = ''
+          }
+          return false
+        }
       }
       return true
     })
@@ -122,6 +173,18 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
 
     const dataDispose = term.onData(data => {
       socket.emit('data', { sessionId, data })
+      // Update commandBuffer based on data
+      for (let i = 0; i < data.length; i++) {
+        const char = data[i]
+        if (char === '\r' || char === '\n') {
+          commandBuffer = ''
+        } else if (char === '\x7f' || char === '\x08') {
+          commandBuffer = commandBuffer.slice(0, -1)
+        } else if (char >= ' ' && char <= '~') {
+          commandBuffer += char
+        }
+        // Ignore other control characters (escape sequences etc.)
+      }
     })
 
     const resizeDispose = term.onResize(({ cols, rows }) => {
