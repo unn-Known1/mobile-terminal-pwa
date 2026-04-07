@@ -4,6 +4,7 @@ import FileExplorer from './components/FileExplorer'
 import Terminal from './components/Terminal'
 import SplitTerminal from './components/SplitTerminal'
 import SettingsPanel, { THEMES } from './components/SettingsPanel'
+import CodeEditor from './components/CodeEditor'
 import { Settings, PanelLeftClose, PanelLeftOpen, Split } from 'lucide-react'
 import { useSocket } from './hooks/useSocket'
 
@@ -52,6 +53,7 @@ export default function App() {
   const [fontSize, setFontSize] = useState(14)
   const [theme, setTheme] = useState('dark')
   const [tabStatuses, setTabStatuses] = useState({})
+  const [editorFile, setEditorFile] = useState(null)
   const { connected } = useSocket('/')
 
   useEffect(() => {
@@ -143,6 +145,7 @@ export default function App() {
           currentPath={currentPath}
           onNavigate={setCurrentPath}
           onOpenTerminal={handleOpenTerminal}
+          onOpenFile={setEditorFile}
         />
         <div className={`terminal-area ${explorerOpen ? 'with-explorer' : ''}`}>
           {splitMode ? (
@@ -181,12 +184,14 @@ export default function App() {
         {explorerOpen ? <PanelLeftClose size={24} /> : <PanelLeftOpen size={24} />}
       </button>
 
-      <SettingsPanel
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onFontSizeChange={setFontSize}
-        onThemeChange={setTheme}
-      />
-    </div>
-  )
+       <SettingsPanel
+         isOpen={settingsOpen}
+         onClose={() => setSettingsOpen(false)}
+         onFontSizeChange={setFontSize}
+         onThemeChange={setTheme}
+       />
+
+       <CodeEditor filePath={editorFile} onClose={() => setEditorFile(null)} />
+     </div>
+   )
 }

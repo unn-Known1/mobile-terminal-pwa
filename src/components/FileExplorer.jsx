@@ -4,7 +4,7 @@ import {
   Copy, Scissors, Clipboard, FilePlus, Download, Trash2, Edit3, X, Check, Star, Upload
 } from 'lucide-react'
 
-export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTerminal }) {
+export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTerminal, onOpenFile }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -314,7 +314,7 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
         <button className="icon-btn-sm" onClick={toggleBookmark} title={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}>
           {isBookmarked ? <Star size={14} fill="currentColor" /> : <Star size={14} />}
         </button>
-        <input type="file" id="file-upload" style={{ display: 'none' }} onChange={handleUpload} />
+        <input type="file" id="file-upload" name="file-upload" aria-label="Upload file" style={{ display: 'none' }} onChange={handleUpload} />
         <button className="icon-btn-sm" onClick={() => document.getElementById('file-upload').click()} title="Upload file">
           <Upload size={14} />
         </button>
@@ -369,6 +369,11 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
                   else onNavigate(item.path)
                 }
                 setSelectedItem(item)
+              }}
+              onDoubleClick={(e) => {
+                if (!item.isDirectory && onOpenFile) {
+                  onOpenFile(item.path)
+                }
               }}
               onContextMenu={(e) => handleContextMenu(e, item)}
             >
@@ -451,7 +456,10 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
               <button onClick={() => setModal({ type: null, item: null })}><X size={16} /></button>
             </div>
             <div className="modal-body">
+              <label htmlFor="rename-input" className="sr-only">New name</label>
               <input 
+                id="rename-input"
+                name="rename-input"
                 type="text" 
                 value={modalInput} 
                 onChange={e => setModalInput(e.target.value)} 
@@ -478,7 +486,10 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
               <button onClick={() => setModal({ type: null, item: null })}><X size={16} /></button>
             </div>
             <div className="modal-body">
+              <label htmlFor="create-filename" className="sr-only">Filename</label>
               <input 
+                id="create-filename"
+                name="create-filename"
                 type="text" 
                 value={modalInput} 
                 onChange={e => setModalInput(e.target.value)} 

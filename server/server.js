@@ -84,8 +84,8 @@ function checkToken(req, res, next) {
 </head>
 <body>
   <div class="pin-box">
-    <h1>🔒 Enter PIN</h1>
-    <input type="text" id="pin" maxlength="6" placeholder="000000" />
+    <label for="pin">🔒 Enter PIN</label>
+    <input type="text" id="pin" name="pin" maxlength="6" placeholder="000000" />
     <br/>
     <button onclick="verifyPin()">Enter</button>
     <div class="error" id="error">Invalid PIN</div>
@@ -262,6 +262,33 @@ app.get('/api/file/info', (req, res) => {
     res.json({ exists: true, isDirectory: stats.isDirectory(), size: stats.size, mtime: stats.mtime })
   } catch {
     res.json({ exists: false })
+  }
+})
+
+// File read/write endpoints for code editor
+app.get('/api/file/read', (req, res) => {
+  const filePath = req.query.path
+  if (!filePath) return res.json({ error: 'Missing path' })
+  const validation = validatePath(filePath)
+  if (validation) return res.json(validation)
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    res.json({ content })
+  } catch (err) {
+    res.json({ error: err.message })
+  }
+})
+
+app.post('/api/file/write', (req, res) => {
+  const { path: filePath, content } = req.body
+  if (!filePath) return res.json({ error: 'Missing path' })
+  const validation = validatePath(filePath)
+  if (validation) return res.json(validation)
+  try {
+    fs.writeFileSync(filePath, content, 'utf-8')
+    res.json({ ok: true })
+  } catch (err) {
+    res.json({ error: err.message })
   }
 })
 
