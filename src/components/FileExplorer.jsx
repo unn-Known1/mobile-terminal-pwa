@@ -121,11 +121,15 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
     try {
       const cleanPath = path === '/' ? '' : path
       const res = await fetch('/api/ls' + cleanPath)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
       const data = await res.json()
       if (data.error) throw new Error(data.error)
       setItems(Array.isArray(data) ? data : [])
     } catch (err) {
+      console.error('Failed to fetch directory:', err)
       setError(err.message)
       setItems([])
     }

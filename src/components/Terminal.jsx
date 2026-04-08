@@ -17,8 +17,9 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   const { socket, connected } = useSocket('/')
   const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
   const commandBufferRef = useRef('')
-  const seqRef = useRef(0) // monotonically increasing sequence number per terminal
-  const [contextMenu, setContextMenu] = useState(null) // { x, y, selection }
+  const seqRef = useRef(0)
+  const [contextMenu, setContextMenu] = useState(null)
+  const [isAtBottom, setIsAtBottom] = useState(true)
 
   // Initial terminal setup
   useEffect(() => {
@@ -27,18 +28,19 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     const term = new XTerm({
       theme: buildTheme(theme),
       fontSize,
-      fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace",
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       cursorBlink: true,
       allowTransparency: true,
-      scrollback: 5000,
+      scrollback: 10000,
       macOptionIsMeta: true,
       disableStdin: false,
       cursorStyle: 'block',
       overviewRulerWidth: 0,
+      convertEol: true,
     })
 
-    // Prevent viewport issues by setting the scrollbar strategy
-    term.options.scrollbarWidth = 0
+    // Enable touch scrolling options
+    term.options.scrollback = 10000
 
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
@@ -52,10 +54,26 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     // Add id and name to xterm's hidden textarea to satisfy autofill/accessibility checks
     // The textarea is used for mobile input capture and is created by xterm.js
     const textarea = containerRef.current.querySelector('textarea')
-    if (textarea && !textarea.id) {
+    if (textarea) {
       const taId = `xterm-textarea-${sessionId || Math.random().toString(36).substr(2, 9)}`
       textarea.id = taId
       textarea.name = taId
+      // Ensure textarea is visible and accessible for touch keyboards
+      textarea.style.cssText = `
+        position: absolute;
+        opacity: 1;
+        pointer-events: auto;
+        z-index: 100;
+        font-size: ${fontSize}px;
+        font-family: 'JetBrains Mono', monospace;
+      `
+      // Focus textarea when clicked/tapped
+      containerRef.current.addEventListener('click', () => {
+        textarea.focus()
+      })
+      containerRef.current.addEventListener('touchend', () => {
+        setTimeout(() => textarea.focus(), 100)
+      })
     }
     
     // Delay fit to ensure viewport is ready
@@ -67,14 +85,41 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     setTimeout(doFit, 100)
      setTimeout(doFit, 300)
 
-      termRef.current = term
+     termRef.current = term
       fitAddonRef.current = fitAddon
 
-     const onResize = () => {
-      if (containerRef.current?.offsetWidth > 0) {
-        try { fitAddon.fit() } catch {}
+      // Sync scroll position with xterm's internal scroll
+      const syncScroll = () => {
+        if (!containerRef.current || !scrollContainerRef.current) return
+        const terminal = containerRef.current.querySelector('.xterm')
+        if (terminal) {
+          const scrollTop = terminal.scrollTop
+          const scrollHeight = terminal.scrollHeight
+          const clientHeight = terminal.clientHeight
+          const atBottom = scrollHeight - scrollTop - clientHeight < 50
+          setIsAtBottom(atBottom)
+          
+          // Show scroll hint when scrolled up
+          if (scrollTop > 100) {
+            setShowScrollHint(true)
+          } else {
+            setShowScrollHint(false)
+          }
+        }
       }
-    }
+
+      const onResize = () => {
+        if (containerRef.current?.offsetWidth > 0) {
+          try { fitAddon.fit() } catch {}
+          // Scroll to bottom after resize if we were at bottom
+          setTimeout(() => {
+            if (isAtBottom) {
+              const terminal = containerRef.current?.querySelector('.xterm')
+              if (terminal) terminal.scrollTop = terminal.scrollHeight
+            }
+          }, 50)
+        }
+      }
     const ro = new ResizeObserver(onResize)
     ro.observe(containerRef.current)
     window.addEventListener('resize', onResize)
@@ -101,15 +146,6 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
            const query = window.prompt('Search:')
            if (query) searchAddon.findNext(query)
            return false
-         }
-
-         // Enter key: submit command
-         if (e.key === 'Enter') {
-           if (commandBufferRef.current.trim()) {
-             addToHistory(commandBufferRef.current)
-           }
-           commandBufferRef.current = ''
-           return true // allow newline to be sent to pty
          }
 
          // Arrow Up: previous command in history
@@ -164,6 +200,16 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
         term.write(data)
         setLastActivity(Date.now())
         onStatusChange?.(sessionId, 'notification')
+        
+        // Auto-scroll to bottom if we were at bottom
+        if (isAtBottom) {
+          requestAnimationFrame(() => {
+            const terminal = containerRef.current?.querySelector('.xterm')
+            if (terminal) {
+              terminal.scrollTop = terminal.scrollHeight
+            }
+          })
+        }
       }
     }
     const onExit = ({ sessionId: sid }) => {
@@ -190,26 +236,22 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
      const dataDispose = term.onData(data => {
        const seq = seqRef.current++
        socket.emit('data', { sessionId, data, seq })
-       // Update commandBufferRef based on data
+       
+       // Only track printable characters for command history
        for (let i = 0; i < data.length; i++) {
          const char = data[i]
          if (char === '\r' || char === '\n') {
+           // Add to history when command is submitted
+           const cmd = commandBufferRef.current.trim()
+           if (cmd) {
+             addToHistory(cmd)
+           }
            commandBufferRef.current = ''
          } else if (char === '\x7f' || char === '\x08') {
            commandBufferRef.current = commandBufferRef.current.slice(0, -1)
          } else if (char >= ' ' && char <= '~') {
            commandBufferRef.current += char
          }
-         // Ignore other control characters (escape sequences etc.)
-       }
-
-       // Add to history on Enter
-       if (data.includes('\r') || data.includes('\n')) {
-         const cmd = commandBufferRef.current.trim()
-         if (cmd) {
-           addToHistory(cmd)
-         }
-         commandBufferRef.current = ''
        }
      })
 
@@ -299,6 +341,42 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     setContextMenu(null)
   }, [])
 
+  // Scroll to bottom function
+  const scrollToBottom = useCallback(() => {
+    const terminal = containerRef.current?.querySelector('.xterm')
+    if (terminal) {
+      terminal.scrollTo({ top: terminal.scrollHeight, behavior: 'smooth' })
+    }
+  }, [])
+
+  // Handle scroll events on the terminal
+  useEffect(() => {
+    const viewport = containerRef.current?.querySelector('.xterm-viewport')
+    if (!viewport) return
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = viewport
+      const atBottom = scrollHeight - scrollTop - clientHeight < 50
+      setIsAtBottom(atBottom)
+      
+      // Toggle scrolled class for visual indicator
+      if (scrollTop > 50) {
+        viewport.classList.add('scrolled')
+      } else {
+        viewport.classList.remove('scrolled')
+      }
+    }
+
+    viewport.addEventListener('scroll', handleScroll, { passive: true })
+    
+    // Initial scroll to bottom
+    setTimeout(() => {
+      viewport.scrollTop = viewport.scrollHeight
+    }, 100)
+
+    return () => viewport.removeEventListener('scroll', handleScroll)
+  }, [connected])
+
   return (
     <div className="terminal-wrapper">
       {!connected && (
@@ -306,7 +384,33 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
           <span className="reconnecting">Reconnecting…</span>
         </div>
       )}
-      <div ref={containerRef} className="terminal-container" />
+      <div 
+        ref={scrollContainerRef} 
+        className="terminal-scroll-container"
+        onScroll={() => {
+          const terminal = containerRef.current?.querySelector('.xterm')
+          if (terminal) {
+            const { scrollTop, scrollHeight, clientHeight } = terminal
+            setIsAtBottom(scrollHeight - scrollTop - clientHeight < 50)
+          }
+        }}
+      >
+        <div ref={containerRef} className="terminal-container" />
+      </div>
+      
+      {/* Scroll to bottom FAB */}
+      {!isAtBottom && (
+        <button 
+          className="scroll-to-bottom"
+          onClick={scrollToBottom}
+          title="Scroll to bottom"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 5v14M5 12l7 7 7-7"/>
+          </svg>
+        </button>
+      )}
+      
       <MobileKeyboard onKey={handleMobileKey} />
       <ContextMenu
         x={contextMenu?.x}

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronUp, ChevronDown } from 'lucide-react'
+import { ChevronUp, ChevronDown, Keyboard } from 'lucide-react'
 
 const ROW1 = [
   { label: 'ESC', value: '\x1b' },
@@ -29,39 +29,56 @@ const ROW2 = [
 
 export default function MobileKeyboard({ onKey }) {
   const [expanded, setExpanded] = useState(false)
+  const [collapsed, setCollapsed] = useState(false)
 
   return (
-    <div className="mobile-keyboard">
-      <div className="kb-row">
-        {ROW1.map(k => (
-          <button
-            key={k.label}
-            className={`kb-key${k.accent ? ' accent' : ''}`}
-            onPointerDown={e => { e.preventDefault(); onKey(k.value) }}
-          >
-            {k.label}
-          </button>
-        ))}
-        <button
-          className="kb-key expand-btn"
-          onPointerDown={e => { e.preventDefault(); setExpanded(v => !v) }}
-          title={expanded ? 'Less keys' : 'More keys'}
-        >
-          {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-        </button>
-      </div>
-      {expanded && (
-        <div className="kb-row">
-          {ROW2.map(k => (
+    <div className={`mobile-keyboard ${collapsed ? 'collapsed' : ''}`}>
+      <button 
+        className="kb-collapse-toggle"
+        onClick={() => setCollapsed(v => !v)}
+        title={collapsed ? 'Show keyboard' : 'Hide keyboard'}
+      >
+        <Keyboard size={14} />
+        <span>{collapsed ? 'Show keyboard' : 'Hide'}</span>
+        {collapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+      
+      {!collapsed && (
+        <>
+          <div className="kb-row">
+            {ROW1.map(k => (
+              <button
+                key={k.label}
+                className={`kb-key${k.accent ? ' accent' : ''}`}
+                onPointerDown={e => { e.preventDefault(); onKey(k.value) }}
+                onTouchStart={e => { e.preventDefault(); onKey(k.value) }}
+              >
+                {k.label}
+              </button>
+            ))}
             <button
-              key={k.label}
-              className={`kb-key${k.accent ? ' accent' : ''}`}
-              onPointerDown={e => { e.preventDefault(); onKey(k.value) }}
+              className="kb-key expand-btn"
+              onPointerDown={e => { e.preventDefault(); setExpanded(v => !v) }}
+              title={expanded ? 'Less keys' : 'More keys'}
             >
-              {k.label}
+              {expanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
             </button>
-          ))}
-        </div>
+          </div>
+          {expanded && (
+            <div className="kb-row">
+              {ROW2.map(k => (
+                <button
+                  key={k.label}
+                  className={`kb-key${k.accent ? ' accent' : ''}`}
+                  onPointerDown={e => { e.preventDefault(); onKey(k.value) }}
+                  onTouchStart={e => { e.preventDefault(); onKey(k.value) }}
+                >
+                  {k.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   )

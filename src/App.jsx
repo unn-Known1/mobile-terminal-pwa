@@ -6,6 +6,7 @@ import SplitTerminal from './components/SplitTerminal'
 import SettingsPanel, { THEMES } from './components/SettingsPanel'
 import CodeEditor from './components/CodeEditor'
 import NetworkStatus from './components/NetworkStatus'
+import ErrorBoundary from './components/ErrorBoundary'
 import { Settings, PanelLeftClose, PanelLeftOpen, Split, Clipboard } from 'lucide-react'
 import { useSocket } from './hooks/useSocket'
 
@@ -105,6 +106,7 @@ export default function App() {
   }
 
   return (
+    <ErrorBoundary>
     <div className="app">
       <div className="top-bar">
         <div className="tabs-container">
@@ -207,6 +209,7 @@ export default function App() {
        />
 
        <CodeEditor filePath={editorFile} onClose={() => setEditorFile(null)} />
-     </div>
-   )
+      </div>
+    </ErrorBoundary>
+  )
 }
