@@ -275,6 +275,17 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     setContextMenu(null)
   }, [socket, sessionId])
 
+  // Listen for paste events from app toolbar button
+  useEffect(() => {
+    const handlePasteEvent = (e) => {
+      if (socket && e.detail?.text) {
+        socket.emit('data', { sessionId, data: e.detail.text, seq: seqRef.current++ })
+      }
+    }
+    window.addEventListener('terminal-paste', handlePasteEvent)
+    return () => window.removeEventListener('terminal-paste', handlePasteEvent)
+  }, [socket, sessionId])
+
   const handleSelectAll = useCallback(() => {
     if (termRef.current) {
       // Select all content in terminal

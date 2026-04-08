@@ -6,7 +6,7 @@ import SplitTerminal from './components/SplitTerminal'
 import SettingsPanel, { THEMES } from './components/SettingsPanel'
 import CodeEditor from './components/CodeEditor'
 import NetworkStatus from './components/NetworkStatus'
-import { Settings, PanelLeftClose, PanelLeftOpen, Split } from 'lucide-react'
+import { Settings, PanelLeftClose, PanelLeftOpen, Split, Clipboard } from 'lucide-react'
 import { useSocket } from './hooks/useSocket'
 
 function loadSession() {
@@ -121,6 +121,19 @@ export default function App() {
         </div>
          <div className="actions">
            <NetworkStatus connected={connected} latency={latency} reconnectCount={reconnectCount} />
+           <button
+             className="icon-btn"
+             onClick={() => {
+               navigator.clipboard.readText().then(text => {
+                 // Emit paste event to active terminal
+                 const event = new CustomEvent('terminal-paste', { detail: { text } })
+                 window.dispatchEvent(event)
+               }).catch(err => console.error('Paste failed:', err))
+             }}
+             title="Paste from clipboard"
+           >
+             <Clipboard size={18} />
+           </button>
            <button
              className="icon-btn"
              onClick={() => setSplitMode(v => !v)}
