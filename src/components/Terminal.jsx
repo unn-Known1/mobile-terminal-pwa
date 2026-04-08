@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -7,6 +7,7 @@ import 'xterm/css/xterm.css'
 import { useSocket } from '../hooks/useSocket'
 import { useCommandHistory } from '../hooks/useCommandHistory'
 import MobileKeyboard from './MobileKeyboard'
+import ContextMenu from './ContextMenu'
 
 export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, onStatusChange }) {
   const containerRef = useRef(null)
@@ -17,6 +18,7 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
   const commandBufferRef = useRef('')
   const seqRef = useRef(0) // monotonically increasing sequence number per terminal
+  const [contextMenu, setContextMenu] = useState(null) // { x, y, selection }
 
   // Initial terminal setup
   useEffect(() => {
@@ -77,6 +79,20 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     ro.observe(containerRef.current)
     window.addEventListener('resize', onResize)
 
+    // Handle right-click context menu
+    const handleContextMenu = (e) => {
+      e.preventDefault()
+      const selection = term.getSelection()
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        selection: selection,
+        hasSelection: selection.length > 0
+      })
+    }
+
+    containerRef.current.addEventListener('contextmenu', handleContextMenu)
+
      // Ctrl+F → search
      term.attachCustomKeyEventHandler(e => {
        if (e.type === 'keydown') {
@@ -127,6 +143,7 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', onResize)
+      containerRef.current?.removeEventListener('contextmenu', handleContextMenu)
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null
@@ -237,6 +254,40 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     if (socket) socket.emit('data', { sessionId, data: value, seq: seqRef.current++ })
   }
 
+  // Clipboard operations for context menu
+  const handleCopy = useCallback(() => {
+    if (contextMenu?.selection) {
+      navigator.clipboard.writeText(contextMenu.selection)
+      termRef.current?.clearSelection()
+    }
+    setContextMenu(null)
+  }, [contextMenu])
+
+  const handlePaste = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (socket && text) {
+        socket.emit('data', { sessionId, data: text, seq: seqRef.current++ })
+      }
+    } catch (err) {
+      console.error('Failed to paste:', err)
+    }
+    setContextMenu(null)
+  }, [socket, sessionId])
+
+  const handleSelectAll = useCallback(() => {
+    if (termRef.current) {
+      // Select all content in terminal
+      const term = termRef.current
+      term.selectAll()
+    }
+    setContextMenu(null)
+  }, [])
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null)
+  }, [])
+
   return (
     <div className="terminal-wrapper">
       {!connected && (
@@ -246,6 +297,15 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       )}
       <div ref={containerRef} className="terminal-container" />
       <MobileKeyboard onKey={handleMobileKey} />
+      <ContextMenu
+        x={contextMenu?.x}
+        y={contextMenu?.y}
+        onCopy={handleCopy}
+        onPaste={handlePaste}
+        onSelectAll={handleSelectAll}
+        onClose={closeContextMenu}
+        hasSelection={contextMenu?.hasSelection}
+      />
     </div>
   )
 }
