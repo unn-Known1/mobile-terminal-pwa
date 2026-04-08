@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
-import { 
+import {
   Folder, File, ChevronLeft, Terminal, RefreshCw, Eye, EyeOff,
   Copy, Scissors, Clipboard, FilePlus, Download, Trash2, Edit3, X, Check, Star, Upload
 } from 'lucide-react'
+
+// Simple path utility functions (avoid Node.js path in browser)
+const getBasename = (p) => p.split('/').filter(Boolean).pop() || ''
 
 export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTerminal, onOpenFile }) {
   const [items, setItems] = useState([])
@@ -296,7 +299,7 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
         <button className="icon-btn-sm" onClick={handleCreate} title="New file">
           <FilePlus size={14} />
         </button>
-        <button className="icon-btn-sm" onClick={() => handleDownload({ path: currentPath, name: path.basename(currentPath) || 'folder' })} title="Download folder">
+        <button className="icon-btn-sm" onClick={() => handleDownload({ path: currentPath, name: getBasename(currentPath) || 'folder' })} title="Download folder">
           <Download size={14} />
         </button>
         <button className="icon-btn-sm" onClick={handleCopy} disabled={!selectedItem} title="Copy">

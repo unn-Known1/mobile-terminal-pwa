@@ -15,8 +15,7 @@
     "build:win": "npm run build && electron-builder --win",
     "build:linux": "npm run build && electron-builder --linux",
     "build:all": "npm run build && electron-builder --win --linux",
-    "build:deb": "npm run build && electron-builder --linux deb",
-    "postinstall": "electron-builder install-app-deps"
+    "build:deb": "npm run build && electron-builder --linux deb"
   },
   "build": {
     "appId": "com.mobile-terminal.pwa",
