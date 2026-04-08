@@ -34,7 +34,7 @@ function checkToken(req, res, next) {
   }
   
   // Allow API routes always (they handle their own auth via headers)
-  if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) {
+  if (req.path.startsWith('/api/') || req.path === '/socket.io' || req.path.startsWith('/socket.io/')) {
     return next()
   }
   
@@ -158,52 +158,168 @@ function generateToken() {
 }
 
 app.post('/api/tunnel/start', async (req, res) => {
+  console.log('[TUNNEL] Start request received')
   if (tunnelProcess && tunnelUrl) {
+    console.log('[TUNNEL] Already running with URL:', tunnelUrl)
     return res.json({ url: tunnelUrl, pin: tunnelPin, alreadyRunning: true })
   }
   tunnelActive = true
   tunnelPin = generatePin()
+  console.log('[TUNNEL] Generated PIN:', tunnelPin)
 
   // Determine which port to expose via tunnel:
-  // Allow explicit override via TUNNEL_TARGET_PORT.
-  // - In production (NODE_ENV=production): Express serves frontend+backend on same port.
-  // - In development: Vite dev server (default 5173) serves frontend and proxies API to Express (port 5151).
-  const isProduction = process.env.NODE_ENV === 'production'
+  // - Development mode: target Vite dev server (5173) which proxies API to Express
+  // - Production mode: target Express server (5151) which serves built frontend
   const targetPort = process.env.TUNNEL_TARGET_PORT ||
-    (isProduction ? (server.address()?.port || PORT) : (process.env.FRONTEND_PORT || 5173))
+    (process.env.NODE_ENV === 'production' ? (server.address()?.port || PORT) : 5173)
+
+  const cloudflaredPath = process.env.CLOUDFARED || path.join(process.env.HOME || '/home/' + process.env.USER, '.cloudflared', 'cloudflared')
+
+  // Verify cloudflared binary exists and is executable
+  try {
+    fs.accessSync(cloudflaredPath, fs.constants.X_OK)
+  } catch (e) {
+    tunnelActive = false
+    return res.json({ 
+      error: `cloudflared not found or not executable at ${cloudflaredPath}. Run ./tunnel.sh to install.` 
+    })
+  }
 
   try {
-    tunnelProcess = spawn(process.env.CLOUDFARED || path.join(process.env.HOME || '/home/' + process.env.USER, '.cloudflared', 'cloudflared'), ['tunnel', '--url', `http://localhost:${targetPort}`], {
+    tunnelProcess = spawn(cloudflaredPath, ['tunnel', '--url', `http://localhost:${targetPort}`], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
     let url = null
-    // Flexible URL pattern to match various Cloudflare domain formats
-    const urlPattern = /https?:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}/g
+    let fullOutput = ''
+    const outputLines = []
+    const MAX_LINES = 1000 // prevent memory issues
 
-    const onData = (chunk) => {
-      if (url || res.headersSent) return
+    const logOutput = (chunk, stream) => {
       const text = chunk.toString()
-      const matches = text.match(urlPattern)
-      if (matches && matches.length > 0) {
-        // Prefer Cloudflare-specific domains, otherwise take first
-        const cloudflareUrl = matches.find(m => /cloudflare|trycloudflare\.com|cloudflareworkers\.com|workers\.dev/.test(m)) || matches[0]
-        url = cloudflareUrl
-        tunnelUrl = url
-        res.json({ url, pin: tunnelPin })
-      }
+      console.log(`[cloudflared ${stream}]:`, text.trim())
+      // accumulate lines for error detection
+      const lines = text.split('\n').filter(l => l.trim())
+      lines.forEach(line => {
+        if (outputLines.length < MAX_LINES) outputLines.push(line)
+        fullOutput += line + '\n'
+      })
     }
 
+    // Simple URL extraction: find any trycloudflare.com URL
+     const extractUrl = (text) => {
+       const match = text.match(/https?:\/\/[a-zA-Z0-9][a-zA-Z0-9.-]*\.trycloudflare\.com\/?/i)
+       return match ? match[0].replace(/\/$/, '') : null
+     }
+
+     let ready = false
+
+     const trySendUrl = () => {
+       if (url || res.headersSent) return
+
+       const foundUrl = extractUrl(fullOutput)
+       if (foundUrl && ready) {
+         // Both URL and ready signal received
+         console.log('[TUNNEL] Tunnel ready with URL:', foundUrl)
+         url = foundUrl
+         tunnelUrl = url
+         res.json({ url, pin: tunnelPin })
+       }
+     }
+
+     const checkReady = () => {
+       if (ready || url || res.headersSent) return
+       // Look for "Registered tunnel connection" or similar
+       if (fullOutput.includes('Registered tunnel connection') || 
+           fullOutput.includes('Tunnel connection established') ||
+           /INF.*connection=/.test(fullOutput)) {
+         console.log('[TUNNEL] Tunnel ready signal detected')
+         ready = true
+         trySendUrl()
+       }
+     }
+
+     const onData = (chunk) => {
+       logOutput(chunk, 'stdout')
+       const prevHasUrl = !!extractUrl(fullOutput)
+       checkReady()
+       if (!prevHasUrl) trySendUrl() // check URL on stdout
+     }
+
+     const onErr = (chunk) => {
+       logOutput(chunk, 'stderr')
+       const prevHasUrl = !!extractUrl(fullOutput)
+       checkReady()
+       if (!prevHasUrl) trySendUrl() // check URL on stderr
+     }
+
     tunnelProcess.stdout.on('data', onData)
-    tunnelProcess.stderr.on('data', onData)
+    tunnelProcess.stderr.on('data', onErr)
 
-    tunnelProcess.on('exit', () => { tunnelProcess = null })
+    // Error detection from stderr keywords – be less aggressive to avoid false positives
+    const errorKeywords = ['unauthorized', 'denied', 'permission', 'cannot create', 'exited with code']
+    let possibleErrorLogged = false
+    const checkForError = () => {
+      if (url || res.headersSent) return
+      // Only fail if we've seen "Your quick Tunnel has been created!" message (indicating we should have URL)
+      const hasCreatedMsg = outputLines.some(l => /quick Tunnel has been created/i.test(l))
+      if (!hasCreatedMsg) return // still in progress
 
-    setTimeout(() => {
-      if (!url && !res.headersSent) res.json({ error: 'Timeout waiting for tunnel URL. Make sure cloudflared is installed and the target port is accessible.' })
-    }, 30000) // 30s timeout for slower networks
+      const combined = outputLines.join('\n').toLowerCase()
+      const found = errorKeywords.find(kw => combined.includes(kw))
+      if (found && outputLines.length > 0 && !possibleErrorLogged) {
+        possibleErrorLogged = true
+        // Likely an error after promising start – capture last few lines
+        const recent = outputLines.slice(-3).join('\n').trim()
+        console.log('Potential tunnel error after creation message:', recent)
+        // Don't immediately respond; might still succeed. Just log.
+      }
+    }
+    // check for errors every 3 seconds
+    const errorCheckInterval = setInterval(checkForError, 3000)
+
+    tunnelProcess.on('exit', (code) => {
+      console.log('Tunnel process exited with code:', code)
+      tunnelProcess = null
+      // Clear tunnel state if this was the active tunnel
+      if (tunnelActive) {
+        tunnelActive = false
+        tunnelUrl = null
+        tunnelPin = null
+        validTokens.clear()
+      }
+      if (!url && !res.headersSent) {
+        res.json({ error: 'Tunnel process exited unexpectedly (code ' + code + ')' })
+      }
+    })
+
+    const timeoutMs = parseInt(process.env.TUNNEL_TIMEOUT) * 1000 || 90000
+    const timeoutId = setTimeout(() => {
+      if (!url && !res.headersSent) {
+        const lastLines = outputLines.slice(-10).join('\n')
+        console.log('Tunnel start timeout. Full output captured:', outputLines.length, 'lines')
+        res.json({ 
+          error: `Timeout waiting for tunnel URL after ${timeoutMs/1000}s. Target: http://localhost:${targetPort}`,
+          debug: { targetPort, lines: outputLines.length, lastLines }
+        })
+      }
+    }, timeoutMs)
+
+    // Clear timeout when response is sent
+    const clearTimeoutIfNeeded = () => {
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+    // We need to intercept res.json to clear timeout. But simpler: we can clear timeout after sending.
+    // We'll store original json method and wrap it.
+    const originalJson = res.json.bind(res)
+    res.json = (body) => {
+      clearTimeout(timeoutId)
+      return originalJson(body)
+    }
+
   } catch (err) {
-    res.json({ error: err.message })
+    console.error('Tunnel spawn error:', err)
+    res.json({ error: `Failed to start tunnel: ${err.message}` })
   }
 })
 
@@ -220,7 +336,18 @@ app.post('/api/tunnel/stop', (req, res) => {
 })
 
 app.get('/api/tunnel/status', (req, res) => {
-  res.json({ running: !!tunnelUrl, pin: tunnelPin, url: tunnelUrl })
+  const processInfo = tunnelProcess ? {
+    pid: tunnelProcess.pid,
+    exitCode: tunnelProcess.exitCode,
+    connected: tunnelProcess.connected
+  } : null
+  res.json({ 
+    running: !!tunnelUrl, 
+    pin: tunnelPin, 
+    url: tunnelUrl,
+    tunnelActive,
+    process: processInfo
+  })
 })
 
 app.post('/api/tunnel/verify', (req, res) => {
@@ -233,12 +360,23 @@ app.post('/api/tunnel/verify', (req, res) => {
   res.json({ url: tunnelUrl, valid: true, token })
 })
 
-app.post('/api/tunnel/verify-token', (req, res) => {
-  const { token } = req.body
-  res.json({ valid: validTokens.has(token) })
-})
+ app.post('/api/tunnel/verify-token', (req, res) => {
+   const { token } = req.body
+   res.json({ valid: validTokens.has(token) })
+ })
 
-// File operations
+ // Health check
+ app.get('/health', (req, res) => {
+   res.json({
+     status: 'ok',
+     uptime: process.uptime(),
+     clients: io.engine.clientsCount,
+     tunnelActive,
+     tunnelUrl: tunnelActive ? tunnelUrl : null
+   })
+ })
+
+ // File operations
 function validatePath(filePath) {
   const homeDir = process.env.HOME || '/home/' + process.env.USER
   const resolved = path.resolve(filePath)
@@ -491,11 +629,24 @@ io.on('connection', (socket) => {
      callback()
    })
 
-   // Route input to correct PTY session
-   socket.on('data', ({ sessionId, data }) => {
-    const session = getSession(sessionId)
-    if (session?.pty) session.pty.write(data)
-  })
+     // Route input to correct PTY session (with simple deduplication)
+     socket.on('data', ({ sessionId, data, seq }) => {
+       const session = getSession(sessionId)
+       if (!session?.pty) return
+
+       // If client sent a sequence number, use it for at‑least‑once deduplication
+       if (typeof seq === 'number') {
+         if (seq <= session.lastSeq) return // duplicate packet, ignore
+         session.lastSeq = seq
+       }
+
+       try {
+         session.pty.write(data)
+       } catch (err) {
+         console.error('PTY write error for session', sessionId, err)
+         // Do not close session automatically; write errors may be transient
+       }
+     })
 
   // Resize specific session
   socket.on('resize', ({ sessionId, cols, rows }) => {
@@ -516,9 +667,32 @@ io.on('connection', (socket) => {
     console.log('Client disconnected:', socket.id)
     for (const sid of socketSessions) deleteSession(sid)
     socketSessions.clear()
-  })
-})
+   })
+ })
 
-server.listen(PORT, HOST, () => {
-  console.log(`Server running on http://${HOST}:${PORT}`)
-})
+ // Global error handler (must be after all routes)
+ app.use((err, req, res, next) => {
+   console.error('Unhandled error:', err)
+   const status = err.status || err.statusCode || 500
+   const message = process.env.NODE_ENV === 'production' && status === 500
+     ? 'Internal server error'
+     : (err.message || 'Internal server error')
+   if (!res.headersSent) {
+     res.status(status).json({ error: message })
+   } else {
+     res.end()
+   }
+ })
+
+ // Catch unhandled promise rejections (should not happen)
+ process.on('unhandledRejection', (reason, p) => {
+   console.error('Unhandled Rejection at promise', p, 'reason:', reason)
+ })
+ process.on('uncaughtException', (err) => {
+   console.error('Uncaught Exception:', err)
+   // Optionally exit process: process.exit(1)
+ })
+
+ server.listen(PORT, HOST, () => {
+   console.log(`Server running on http://${HOST}:${PORT}`)
+ })

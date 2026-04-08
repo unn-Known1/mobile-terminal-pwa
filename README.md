@@ -205,6 +205,7 @@ npm install
 # Build for current platform
 npm run build
 
+
 # Package as desktop app
 npm run build:all  # Windows + Linux .deb
 # or

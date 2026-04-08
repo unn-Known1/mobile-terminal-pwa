@@ -81,7 +81,7 @@ export default function App() {
   }
 
   const handleNewTab = (cwd = null, name = null, color = null) => {
-    const id = 'tab-' + Date.now()
+    const id = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
     const tabName = name || `Terminal ${tabs.length + 1}`
     setTabs(prev => [...prev, { id, name: tabName, cwd, color }])
     setActiveTab(id)

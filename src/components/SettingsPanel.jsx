@@ -34,30 +34,55 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
   const [tunnelPin, setTunnelPin] = useState('')
   const [copied, setCopied] = useState(false)
 
-  // Check tunnel status on mount
-  useEffect(() => {
-    fetch('/api/tunnel/status').then(r => r.json()).then(data => {
-      if (data.running && data.pin) {
-        setTunnelUrl(data.url || '')
-        setTunnelPin(data.pin)
-        setTunnelStatus('connected')
-      }
-    }).catch(() => {})
-    
-    // Check for existing tunnel token
-    const storedToken = sessionStorage.getItem('tunnel-token')
-    if (storedToken) {
-      fetch('/api/tunnel/verify-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: storedToken })
-      }).then(r => r.json()).then(data => {
-        if (!data.valid) {
-          sessionStorage.removeItem('tunnel-token')
-        }
-      }).catch(() => {})
-    }
-  }, [])
+   // Check tunnel status on mount and poll while panel is open
+   useEffect(() => {
+     const fetchStatus = () => {
+       fetch('/api/tunnel/status')
+         .then(r => r.json())
+         .then(data => {
+           if (data.running && data.url) {
+             setTunnelUrl(data.url)
+             setTunnelPin(data.pin)
+             setTunnelStatus('connected')
+           } else if (tunnelStatus !== 'starting') {
+             setTunnelStatus('disconnected')
+             setTunnelUrl('')
+             setTunnelPin('')
+           }
+         })
+         .catch(() => {
+           console.error('Failed to fetch tunnel status')
+         })
+     }
+
+     fetchStatus()
+     
+     // If panel is open, poll status every 2 seconds
+     let intervalId = null
+     if (isOpen) {
+       intervalId = setInterval(fetchStatus, 2000)
+     }
+
+     return () => {
+       if (intervalId) clearInterval(intervalId)
+     }
+   }, [isOpen, tunnelStatus])
+
+   // Check for existing tunnel token
+   useEffect(() => {
+     const storedToken = sessionStorage.getItem('tunnel-token')
+     if (storedToken) {
+       fetch('/api/tunnel/verify-token', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ token: storedToken })
+       }).then(r => r.json()).then(data => {
+         if (!data.valid) {
+           sessionStorage.removeItem('tunnel-token')
+         }
+       }).catch(() => {})
+     }
+   }, [])
 
   // Apply saved settings on mount
   useEffect(() => {

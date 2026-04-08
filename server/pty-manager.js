@@ -27,8 +27,8 @@ export function createSession(sessionId, socket, cwd = null) {
     return null
   }
 
-  const session = { pty: ptyProcess, cwd: workingDir, socket }
-  sessions.set(sessionId, session)
+   const session = { pty: ptyProcess, cwd: workingDir, socket, lastSeq: -1 }
+   sessions.set(sessionId, session)
 
   ptyProcess.onData(data => {
     // Always emit with sessionId so client can route correctly

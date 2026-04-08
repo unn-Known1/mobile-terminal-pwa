@@ -12,9 +12,11 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   const containerRef = useRef(null)
   const termRef = useRef(null)
   const fitAddonRef = useRef(null)
-   const [lastActivity, setLastActivity] = useState(Date.now())
-   const { socket, connected } = useSocket('/')
-   const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
+  const [lastActivity, setLastActivity] = useState(Date.now())
+  const { socket, connected } = useSocket('/')
+  const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
+  const commandBufferRef = useRef('')
+  const seqRef = useRef(0) // monotonically increasing sequence number per terminal
 
   // Initial terminal setup
   useEffect(() => {
@@ -61,15 +63,12 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       }
     }
     setTimeout(doFit, 100)
-    setTimeout(doFit, 300)
+     setTimeout(doFit, 300)
 
-     termRef.current = term
-     fitAddonRef.current = fitAddon
+      termRef.current = term
+      fitAddonRef.current = fitAddon
 
-     // Command history buffer
-     let commandBuffer = ''
-
-    const onResize = () => {
+     const onResize = () => {
       if (containerRef.current?.offsetWidth > 0) {
         try { fitAddon.fit() } catch {}
       }
@@ -78,52 +77,52 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     ro.observe(containerRef.current)
     window.addEventListener('resize', onResize)
 
-    // Ctrl+F → search
-    term.attachCustomKeyEventHandler(e => {
-      if (e.type === 'keydown') {
-        // Search: Ctrl+F
-        if (e.ctrlKey && e.key === 'f') {
-          const query = window.prompt('Search:')
-          if (query) searchAddon.findNext(query)
-          return false
-        }
+     // Ctrl+F → search
+     term.attachCustomKeyEventHandler(e => {
+       if (e.type === 'keydown') {
+         // Search: Ctrl+F
+         if (e.ctrlKey && e.key === 'f') {
+           const query = window.prompt('Search:')
+           if (query) searchAddon.findNext(query)
+           return false
+         }
 
-        // Enter key: submit command
-        if (e.key === 'Enter') {
-          if (commandBuffer.trim()) {
-            addToHistory(commandBuffer)
-          }
-          commandBuffer = ''
-          return true // allow newline to be sent to pty
-        }
+         // Enter key: submit command
+         if (e.key === 'Enter') {
+           if (commandBufferRef.current.trim()) {
+             addToHistory(commandBufferRef.current)
+           }
+           commandBufferRef.current = ''
+           return true // allow newline to be sent to pty
+         }
 
-        // Arrow Up: previous command in history
-        if (e.key === 'ArrowUp') {
-          e.preventDefault()
-          const prev = getPrevious()
-          if (prev) {
-            term.write('\r\x1b[K' + prev)
-            commandBuffer = prev
-          }
-          return false
-        }
+         // Arrow Up: previous command in history
+         if (e.key === 'ArrowUp') {
+           e.preventDefault()
+           const prev = getPrevious()
+           if (prev) {
+             term.write('\r\x1b[K' + prev)
+             commandBufferRef.current = prev
+           }
+           return false
+         }
 
-        // Arrow Down: next command in history
-        if (e.key === 'ArrowDown') {
-          e.preventDefault()
-          const next = getNext()
-          if (next) {
-            term.write('\r\x1b[K' + next)
-            commandBuffer = next
-          } else {
-            term.write('\r\x1b[K')
-            commandBuffer = ''
-          }
-          return false
-        }
-      }
-      return true
-    })
+         // Arrow Down: next command in history
+         if (e.key === 'ArrowDown') {
+           e.preventDefault()
+           const next = getNext()
+           if (next) {
+             term.write('\r\x1b[K' + next)
+             commandBufferRef.current = next
+           } else {
+             term.write('\r\x1b[K')
+             commandBufferRef.current = ''
+           }
+           return false
+         }
+       }
+       return true
+     })
 
     return () => {
       ro.disconnect()
@@ -171,21 +170,31 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     socket.on('exit', onExit)
     socket.on('session-ready', onSessionReady)
 
-    const dataDispose = term.onData(data => {
-      socket.emit('data', { sessionId, data })
-      // Update commandBuffer based on data
-      for (let i = 0; i < data.length; i++) {
-        const char = data[i]
-        if (char === '\r' || char === '\n') {
-          commandBuffer = ''
-        } else if (char === '\x7f' || char === '\x08') {
-          commandBuffer = commandBuffer.slice(0, -1)
-        } else if (char >= ' ' && char <= '~') {
-          commandBuffer += char
-        }
-        // Ignore other control characters (escape sequences etc.)
-      }
-    })
+     const dataDispose = term.onData(data => {
+       const seq = seqRef.current++
+       socket.emit('data', { sessionId, data, seq })
+       // Update commandBufferRef based on data
+       for (let i = 0; i < data.length; i++) {
+         const char = data[i]
+         if (char === '\r' || char === '\n') {
+           commandBufferRef.current = ''
+         } else if (char === '\x7f' || char === '\x08') {
+           commandBufferRef.current = commandBufferRef.current.slice(0, -1)
+         } else if (char >= ' ' && char <= '~') {
+           commandBufferRef.current += char
+         }
+         // Ignore other control characters (escape sequences etc.)
+       }
+
+       // Add to history on Enter
+       if (data.includes('\r') || data.includes('\n')) {
+         const cmd = commandBufferRef.current.trim()
+         if (cmd) {
+           addToHistory(cmd)
+         }
+         commandBufferRef.current = ''
+       }
+     })
 
     const resizeDispose = term.onResize(({ cols, rows }) => {
       socket.emit('resize', { sessionId, cols, rows })
@@ -225,7 +234,7 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   }, [sessionId, lastActivity])
 
   const handleMobileKey = (value) => {
-    if (socket) socket.emit('data', { sessionId, data: value })
+    if (socket) socket.emit('data', { sessionId, data: value, seq: seqRef.current++ })
   }
 
   return (
