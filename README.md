@@ -5,45 +5,55 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![GitHub Stars](https://img.shields.io/github/stars/unn-Known1/mobile-terminal?style=social)](https://github.com/unn-Known1/mobile-terminal/stargazers)
-[![Electron](https://img.shields.io/badge/Electron-4.0+-blueviolet)](https://www.electronjs.org)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green)](https://nodejs.org)
 [![React](https://img.shields.io/badge/React-18-blue)](https://react.dev)
 
 </p>
 
-A full-featured, production-grade terminal accessible from mobile browsers and desktop. Built with React, xterm.js, and node-pty for real PTY emulation. Installable as a PWA or use the Electron desktop app.
-
-> **Status**: ✅ Production-ready with proper accessibility, autofill attributes, and form labels implemented.
+A full-featured, production-grade terminal accessible from any browser. Built with React, xterm.js, and node-pty for real PTY emulation. Deploy in seconds with Cloudflare Tunnel.
 
 ---
 
-## Table of Contents
+## One-Command Deployment
 
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Architecture](#architecture)
-- [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Theme Customization](#theme-customization)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
+Deploy your terminal with a single command and access it from anywhere:
+
+```bash
+curl -sL https://raw.githubusercontent.com/unn-Known1/mobile-terminal/main/install.sh | bash
+```
+
+**What happens:**
+1. Installs cloudflared (if not present)
+2. Clones the repository
+3. Installs dependencies
+4. Builds the frontend
+5. Starts the server with Cloudflare Tunnel
+6. Shows your live URL
+
+**Alternative - Git Clone & Run:**
+```bash
+git clone https://github.com/unn-Known1/mobile-terminal.git
+cd mobile-terminal
+npm install
+npm run build
+./tunnel.sh
+```
 
 ---
 
 ## Features
 
-- **Full terminal emulation** via xterm.js with true PTY support
-- **Real shell access** using node-pty (bash, zsh, fish, etc.)
-- **Multi-session support** - each browser tab opens a new shell
-- **PWA installable** - add to home screen for native app experience
-- **Mobile-optimized UI** - responsive design with on-screen keyboard
-- **File explorer** - browse, upload, download, rename files (desktop browsers only)
-- **Tunnel integration** - access from anywhere via Cloudflare Tunnel
-- **Settings sync** - export/import configuration via JSON
-- **Command shortcuts** - customize keyboard shortcuts
-- **Multiple themes** - 12+ beautiful color schemes
-- **Code editor** - edit files with Monaco Editor
-- **Notifications** - alerts for long-running commands, failed commands, etc.
+- Full terminal emulation via xterm.js with true PTY support
+- Real shell access using node-pty (bash, zsh, fish, etc.)
+- **Multi-tab terminal support** - multiple terminals in one browser
+- **Cloudflare Tunnel** - access from anywhere, no port forwarding needed
+- PWA installable - add to home screen for native app experience
+- Mobile-optimized UI - responsive design with on-screen keyboard
+- File explorer - browse, upload, download, rename files
+- PIN-protected access (optional)
+- Multiple themes - 12+ beautiful color schemes
+- Code editor - edit files with Monaco Editor
+- Works in any modern browser
 
 ---
 
@@ -53,34 +63,73 @@ A full-featured, production-grade terminal accessible from mobile browsers and d
 
 - **Node.js** 18+ (recommended: 20 LTS)
 - **npm** 9+
-- For Electron builds: `make`, `gcc`, `python3`, `pkg-config` (Linux build tools)
+- **Git**
 
-### Installation
+### One-Command Install (Recommended)
+
+```bash
+curl -sL https://raw.githubusercontent.com/unn-Known1/mobile-terminal/main/install.sh | bash
+```
+
+### Manual Installation
 
 ```bash
 git clone https://github.com/unn-Known1/mobile-terminal.git
 cd mobile-terminal
 npm install
+npm run build
+./tunnel.sh
 ```
 
-### Start Development
+### Development Mode
 
 ```bash
-# Start both backend + frontend
+git clone https://github.com/unn-Known1/mobile-terminal.git
+cd mobile-terminal
+npm install
 npm run dev
-
-# Or separately:
-# Terminal 1: npm run server   # Backend on localhost:3000
-# Terminal 2: npm run client   # Frontend on localhost:5173
 ```
 
 Open http://localhost:5173 in your browser.
 
-### Access from Mobile
+### Using Cloudflare Tunnel
 
-1. Find your computer's IP: `hostname -I | awk '{print $1}'`
-2. On your phone, open `http://YOUR_IP:5173`
-3. Or use the built-in tunnel: Settings → Tunnel → Start Tunnel
+```bash
+# After installation, run:
+./tunnel.sh
+
+# Or with custom port:
+PORT=3000 ./tunnel.sh
+```
+
+---
+
+## Cloudflare Tunnel Setup
+
+The project includes automatic Cloudflare Tunnel support. When you run `./tunnel.sh`:
+
+1. cloudflared is automatically installed (if not present)
+2. A secure tunnel is created to your local server
+3. You receive a unique URL (e.g., `https://xxxx.trycloudflare.com`)
+4. Access your terminal from any device with just that URL!
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Cloudflare                              │
+│                                                             │
+│   ┌─────────────┐      ┌──────────────┐      ┌──────────┐  │
+│   │   You       │ ───> │ trycloudflare│ ───> │ Your     │  │
+│   │   Phone     │      │    .com      │      │ Server   │  │
+│   └─────────────┘      └──────────────┘      └──────────┘  │
+│                                                     │       │
+│                                              ┌─────────────┐ │
+│                                              │  Mobile     │ │
+│                                              │  Terminal   │ │
+│                                              └─────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -97,6 +146,7 @@ mobile-terminal/
 │   │   ├── SettingsPanel.jsx
 │   │   ├── FileExplorer.jsx
 │   │   ├── TabManager.jsx
+│   │   ├── SplitTerminal.jsx
 │   │   └── CodeEditor.jsx  # Monaco editor
 │   ├── hooks/
 │   │   └── useSocket.js
@@ -107,16 +157,19 @@ mobile-terminal/
 ├── public/
 │   ├── manifest.json       # PWA manifest
 │   └── sw.js               # Service Worker
-└── index.html
+├── install.sh              # One-command installer
+├── tunnel.sh               # Cloudflare tunnel launcher
+└── package.json
 ```
 
 | Layer | Technology |
 |-------|------------|
 | Frontend | React 18 + Vite |
-| Terminal | xterm.js + xterm-addons |
+| Terminal | xterm.js |
 | Backend | Express + Socket.io |
 | PTY | node-pty |
 | Editor | Monaco Editor |
+| Tunnel | Cloudflare Tunnel |
 | Desktop | Electron |
 
 ---
@@ -125,85 +178,47 @@ mobile-terminal/
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+C` / `Cmd+C` | Copy selected text / Cancel |
-| `Ctrl+D` / `Cmd+D` | Send EOF / Exit |
-| `Ctrl+L` / `Cmd+L` | Clear terminal |
-| `Ctrl+Z` / `Cmd+Z` | Suspend process |
-| `Ctrl+F` / `Cmd+F` | Search in terminal |
+| `Ctrl+C` | Copy selected text / Cancel |
+| `Ctrl+D` | Send EOF / Exit |
+| `Ctrl+L` | Clear terminal |
+| `Ctrl+Z` | Suspend process |
+| `Ctrl+F` | Search in terminal |
 | `Tab` | Auto-complete |
 | `↑ / ↓` | History navigation |
 
 Mobile: On-screen keyboard toolbar with ESC, TAB, arrows, ^C, ^D, and symbol row.
 
-See [KEYBOARD_SHORTCUTS.md](docs/KEYBOARD_SHORTCUTS.md) for the complete reference.
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `5173` | Server port |
+| `SHELL` | `/bin/bash` | Default shell |
+
+### Custom Shell
+
+```bash
+SHELL=/bin/zsh ./tunnel.sh
+```
 
 ---
 
-## Theme Customization
+## Security
 
-Add new themes by editing `src/components/SettingsPanel.jsx` → `THEMES` object:
-
-```js
-const THEMES = {
-  myTheme: {
-    label: 'My Theme',
-    background: '#0a0a0a',
-    foreground: '#e0e0e0',
-    cursor: '#00ff00'
-  }
-}
-```
-
----
-
-## Development
-
-See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for the complete development guide.
-
-### Install System Dependencies
-
-**macOS:**
-```bash
-xcode-select --install
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential python3 pkg-config libx11-dev libxext-dev libxss-dev libglib2.0-dev libnss3-dev libasound2-dev
-```
-
-**Fedora:**
-```bash
-sudo dnf groupinstall "Development Tools"
-sudo dnf install python3 pkg-config libX11-devel libXext-devel libXss-devel glib2-devel nss-devel alsa-lib-devel
-```
-
-### Build Commands
-
-```bash
-npm run dev          # Start development
-npm run build        # Build frontend
-npm run server       # Start production server
-npm run electron     # Run Electron app
-npm run build:linux  # Build Linux .deb
-npm run build:win    # Build Windows .exe
-```
+- Access is restricted to your browser only via Cloudflare
+- Optional PIN protection available in settings
+- No data leaves your server (self-hosted)
+- All communication is encrypted via HTTPS
 
 ---
 
 ## Contributing
 
 Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details.
-
-- 🍴 Fork the repo
-- 🌋 Create a feature branch
-- ✅ Test on both desktop and mobile
-- 📝 Submit a Pull Request
-
-**Good first issues:**
-- [Add dark theme option](https://github.com/unn-Known1/mobile-terminal/labels/good%20first%20issue)
-- [Document custom key bindings](https://github.com/unn-Known1/mobile-terminal/labels/enhancement)
 
 ---
 
