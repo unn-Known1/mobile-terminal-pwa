@@ -78,6 +78,23 @@ The mobile UI includes an on-screen keyboard toolbar with these buttons:
 
 You can customize key bindings in Settings → Keyboard Shortcuts.
 
+### Configuration File Format
+
+Create a `keybindings.json` file in your settings directory:
+
+```json
+{
+  "customBindings": {
+    "Ctrl+Shift+T": "openNewTab",
+    "Ctrl+Shift+W": "closeTab",
+    "Ctrl+Shift+N": "newWindow",
+    "Alt+1": "switchToTab1",
+    "Alt+2": "switchToTab2",
+    "Alt+3": "switchToTab3"
+  }
+}
+```
+
 ### Default Bindings
 
 ```javascript
@@ -110,6 +127,68 @@ const SHORTCUTS = {
   }
 }
 ```
+
+### Custom Binding Examples
+
+#### Terminal Productivity
+
+```json
+{
+  "customBindings": {
+    "Ctrl+Shift+L": "clearTerminal",
+    "Ctrl+Shift+K": "clearScrollback",
+    "Ctrl+R": "searchHistory"
+  }
+}
+```
+
+#### Multi-Tab Management
+
+```json
+{
+  "customBindings": {
+    "Ctrl+T": "newTab",
+    "Ctrl+W": "closeTab",
+    "Ctrl+Tab": "nextTab",
+    "Ctrl+Shift+Tab": "prevTab",
+    "Ctrl+1": "switchToTab1",
+    "Ctrl+2": "switchToTab2",
+    "Ctrl+3": "switchToTab3"
+  }
+}
+```
+
+#### Quick Commands
+
+```json
+{
+  "customBindings": {
+    "Ctrl+Shift+C": "copySelection",
+    "Ctrl+Shift+V": "pasteAndExecute",
+    "Ctrl+Alt+F": "toggleFullscreen"
+  }
+}
+```
+
+### Platform-Specific Notes
+
+#### macOS
+
+- Use `Cmd` instead of `Ctrl` in custom bindings
+- `Cmd+K` clears scrollback (not just current line)
+- `Cmd+T` opens new tab (if implemented)
+
+#### Linux
+
+- Standard Ctrl combinations as listed
+- Some terminals may have additional shortcuts
+- X11 key symbols may differ
+
+#### Windows
+
+- `Ctrl+Break` sends SIGINT on Windows
+- `Win+Up/Down` for window management (not terminal)
+- Some key combinations reserved by OS
 
 ## Platform-Specific Notes
 
