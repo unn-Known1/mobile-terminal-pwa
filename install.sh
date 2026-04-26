@@ -5,6 +5,8 @@
 
 set -e
 
+# Use absolute paths for safety
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/mobile-terminal}"
 PROJECT_URL="https://github.com/unn-Known1/mobile-terminal.git"
 CLOUDFLARED_DIR="$HOME/.cloudflared"
@@ -27,7 +29,7 @@ print_banner() {
     cat << 'EOF'
     __ __.__  ___________        ___
     \ \/ /\  \/ /\_   ___ \_____ _____|  |__
-     \   /  \  / /    \  \/\__  \\\_  __ \  |  \
+     \   /  \  / /    \  \/\__  \\_  __ \  |  \
      /   \   \/  \     \__/ __ \ |  | \/   Y  \
     /___/\__/\__/\______\(____  /|__|  |___|  /
           \_/  \/          \/            \/
@@ -59,6 +61,16 @@ install_cloudflared() {
     log_info "Installing cloudflared..."
     mkdir -p "$CLOUDFLARED_DIR"
 
+    # Verify CLOUDFLARED_DIR is within HOME (safety check)
+    case "$CLOUDFLARED_DIR" in
+        "$HOME"*)
+            ;;
+        *)
+            log_error "Cloudflared directory outside HOME. Aborting for safety."
+            exit 1
+            ;;
+    esac
+
     # Detect architecture
     ARCH=$(uname -m)
     case "$ARCH" in
@@ -67,7 +79,16 @@ install_cloudflared() {
         *) FILE="cloudflared-linux-amd64" ;;
     esac
 
-    curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/$FILE" -o "$CLOUDFLARED"
+    log_info "Downloading cloudflared for $ARCH..."
+
+    # Download with retry logic and error handling
+    if ! curl -fsSL --retry 3 --retry-delay 2 \
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/$FILE" \
+        -o "$CLOUDFLARED" 2>/dev/null; then
+        log_error "Failed to download cloudflared"
+        exit 1
+    fi
+
     chmod +x "$CLOUDFLARED"
     log_success "cloudflared installed"
 }
@@ -99,6 +120,15 @@ build_frontend() {
     log_success "Frontend built"
 }
 
+# Cleanup function for graceful shutdown
+cleanup() {
+    log_info "Shutting down..."
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill "$SERVER_PID" 2>/dev/null || true
+    fi
+    exit 0
+}
+
 start_tunnel() {
     log_info "Starting Mobile Terminal with Cloudflare Tunnel..."
     log_info "=============================================="
@@ -108,11 +138,21 @@ start_tunnel() {
     PORT=$SERVER_PORT npm run server > /tmp/mobile-terminal.log 2>&1 &
     SERVER_PID=$!
 
+    # Set cleanup trap
+    trap cleanup INT TERM
+
     # Wait for server to start
     sleep 3
 
+    # Verify server is running
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        log_error "Failed to start server"
+        cat /tmp/mobile-terminal.log
+        exit 1
+    fi
+
     # Start cloudflare tunnel
-    "$CLOUDFLARED" tunnel --url "http://localhost:$SERVER_PORT" 2>&1 | while read line; do
+    "$CLOUDFLARED" tunnel --url "http://localhost:$SERVER_PORT" 2>&1 | while IFS= read -r line; do
         if echo "$line" | grep -q "trycloudflare.com"; then
             echo ""
             log_success "=============================================="
@@ -127,8 +167,7 @@ start_tunnel() {
         fi
     done
 
-    # Cleanup on exit
-    trap "kill $SERVER_PID 2>/dev/null; exit" INT TERM
+    # Keep running until interrupted
     wait
 }
 

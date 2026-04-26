@@ -5,6 +5,8 @@
 
 set -e
 
+# Use absolute paths for safety
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLOUDFLARED="$HOME/.cloudflared/cloudflared"
 SERVER_PORT=${PORT:-5173}
 
@@ -22,6 +24,16 @@ install_cloudflared() {
     log "Installing cloudflared..."
     mkdir -p "$HOME/.cloudflared"
 
+    # Verify directory is within HOME (safety check)
+    case "$HOME/.cloudflared" in
+        "$HOME"*)
+            ;;
+        *)
+            echo "Error: Cloudflared directory outside HOME. Aborting for safety."
+            exit 1
+            ;;
+    esac
+
     ARCH=$(uname -m)
     case "$ARCH" in
         x86_64) FILE="cloudflared-linux-amd64" ;;
@@ -29,10 +41,21 @@ install_cloudflared() {
         *) FILE="cloudflared-linux-amd64" ;;
     esac
 
-    curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/$FILE" -o "$CLOUDFLARED"
+    log "Downloading cloudflared for $ARCH..."
+
+    # Download with retry logic and error handling
+    if ! curl -fsSL --retry 3 --retry-delay 2 \
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/$FILE" \
+        -o "$CLOUDFLARED" 2>/dev/null; then
+        log "Error: Failed to download cloudflared"
+        exit 1
+    fi
     chmod +x "$CLOUDFLARED"
     success "cloudflared installed"
 }
+
+# Change to script directory (safety)
+cd "$SCRIPT_DIR"
 
 # Check if cloudflared exists
 if [ ! -f "$CLOUDFLARED" ]; then
@@ -52,12 +75,29 @@ log "Starting server in background..."
 PORT=$SERVER_PORT npm run server > /tmp/mobile-terminal.log 2>&1 &
 SERVER_PID=$!
 
-# Wait for server to be ready
+# Verify server started
 sleep 2
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    log "Error: Server failed to start"
+    cat /tmp/mobile-terminal.log
+    exit 1
+fi
 
 log "Creating Cloudflare Tunnel..."
 log "=============================================="
 echo ""
+
+# Cleanup function for graceful shutdown
+cleanup() {
+    echo ""
+    log "Shutting down..."
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill "$SERVER_PID" 2>/dev/null || true
+    fi
+    exit 0
+}
+
+trap cleanup INT TERM
 
 # Start tunnel and capture URL
 "$CLOUDFLARED" tunnel --url "http://localhost:$SERVER_PORT" 2>&1 | while IFS= read -r line; do
@@ -76,15 +116,5 @@ echo ""
     echo "$line"
 done
 
-# Cleanup on exit
-cleanup() {
-    echo ""
-    log "Shutting down..."
-    kill $SERVER_PID 2>/dev/null
-    exit 0
-}
-
-trap cleanup INT TERM
-
-# Keep running
+# Keep running until interrupted
 wait

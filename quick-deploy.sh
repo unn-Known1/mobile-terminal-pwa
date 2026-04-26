@@ -5,7 +5,8 @@
 
 set -e
 
-# Configuration
+# Use absolute paths for safety
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${HOME}/mobile-terminal"
 SERVER_PORT=5151
 
@@ -42,6 +43,20 @@ banner() {
     ╚═══════════════════════════════════════════╝
 EOF
     echo -e "${NC}"
+}
+
+# Cleanup function for graceful shutdown
+cleanup() {
+    echo ""
+    error "Shutting down..."
+    # Kill processes if they exist and are running
+    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill "$SERVER_PID" 2>/dev/null || true
+    fi
+    if [ -n "$TUNNEL_PID" ] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        kill "$TUNNEL_PID" 2>/dev/null || true
+    fi
+    exit 0
 }
 
 # Main function
@@ -83,6 +98,16 @@ main() {
     if [ ! -f "$CLOUDFLARED_BIN" ]; then
         mkdir -p "$CLOUDFLARED_DIR"
 
+        # Verify directory is within HOME (safety check)
+        case "$CLOUDFLARED_DIR" in
+            "$HOME"*)
+                ;;
+            *)
+                error "Cloudflared directory outside HOME. Aborting for safety."
+                exit 1
+                ;;
+        esac
+
         # Detect architecture
         ARCH=$(uname -m)
         case $ARCH in
@@ -98,7 +123,12 @@ main() {
         esac
 
         echo -e "${YELLOW}Downloading cloudflared for $ARCH...${NC}"
-        curl -sL "$URL" -o "$CLOUDFLARED_BIN"
+
+        # Download with retry logic and error handling
+        if ! curl -fsSL --retry 3 --retry-delay 2 "$URL" -o "$CLOUDFLARED_BIN" 2>/dev/null; then
+            error "Failed to download cloudflared"
+            exit 1
+        fi
         chmod +x "$CLOUDFLARED_BIN"
     fi
 
@@ -106,8 +136,8 @@ main() {
 
     step "3" "Starting server..."
 
-    # Kill any existing server
-    pkill -f "node.*server.js" 2>/dev/null || true
+    # Kill any existing server with better process matching
+    pkill -f "node.*server/server.js" 2>/dev/null || true
     sleep 1
 
     # Start server in background
@@ -121,13 +151,16 @@ main() {
     # Wait for server to start
     sleep 3
 
-    if ! kill -0 $SERVER_PID 2>/dev/null; then
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
         error "Failed to start server"
         cat /tmp/terminal-server.log
         exit 1
     fi
 
     success "Server running on port $SERVER_PORT"
+
+    # Set cleanup trap
+    trap cleanup INT TERM
 
     step "4" "Creating Cloudflare tunnel..."
 
@@ -143,7 +176,7 @@ main() {
 
     for i in {1..40}; do
         # Check if tunnel process is still running
-        if ! kill -0 $TUNNEL_PID 2>/dev/null; then
+        if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
             error "Tunnel process exited"
             cat /tmp/terminal-tunnel.log
             exit 1
@@ -213,6 +246,9 @@ main() {
     echo "$SERVER_PID $TUNNEL_PID" > /tmp/mobile-terminal-pids
 
     success "Done!"
+
+    # Keep running until interrupted
+    wait
 }
 
 # Run main function

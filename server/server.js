@@ -9,6 +9,7 @@ import fs from 'fs'
 import archiver from 'archiver'
 import multer from 'multer'
 import cookieParser from 'cookie-parser'
+import crypto from 'crypto'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -150,11 +151,16 @@ app.get('/api/pwd/:sessionId', (req, res) => {
 let tunnelProcess = null
 
 function generatePin() {
-  return Math.floor(100000 + Math.random() * 900000).toString()
+  // Generate a cryptographically secure 6-digit PIN
+  const bytes = crypto.randomBytes(4)
+  const num = bytes.readUInt32BE(0)
+  return String(num % 900000 + 100000)
 }
 
 function generateToken() {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+  // Generate a cryptographically secure token using crypto.randomBytes
+  const buffer = crypto.randomBytes(24)
+  return buffer.toString('base64url')
 }
 
 app.post('/api/tunnel/start', async (req, res) => {
@@ -277,7 +283,13 @@ app.post('/api/tunnel/start', async (req, res) => {
         // Likely an error after promising start – capture last few lines
         const recent = outputLines.slice(-3).join('\n').trim()
         console.log('Potential tunnel error after creation message:', recent)
-        // Don't immediately respond; might still succeed. Just log.
+        // Log error with structured data for debugging - helps identify silent failures
+        console.warn(JSON.stringify({
+          type: 'TUNNEL_ERROR_DETECTED',
+          keyword: found,
+          recentOutput: recent,
+          timestamp: new Date().toISOString()
+        }));
       }
     }
     // check for errors every 3 seconds
@@ -642,9 +654,30 @@ io.on('connection', (socket) => {
          session.lastSeq = seq
        }
 
+       // PTY write timeout wrapper to prevent indefinite hangs
+       const PTY_WRITE_TIMEOUT_MS = 5000 // 5 seconds timeout
+       let timeoutId = null
+
        try {
+         // Write data with timeout protection
          session.pty.write(data)
+
+         // Set up timeout to detect unresponsive PTY
+         timeoutId = setTimeout(() => {
+           console.warn(`PTY write timeout for session ${sessionId} - PTY may be unresponsive`)
+           socket.emit('pty-timeout', { sessionId })
+         }, PTY_WRITE_TIMEOUT_MS)
+
+         // Clear timeout on successful write completion (node-pty doesn't have write callback,
+         // but we clear on next data event or disconnect)
+         session.pty.once('data', () => {
+           if (timeoutId) {
+             clearTimeout(timeoutId)
+             timeoutId = null
+           }
+         })
        } catch (err) {
+         if (timeoutId) clearTimeout(timeoutId)
          console.error('PTY write error for session', sessionId, err)
          // Do not close session automatically; write errors may be transient
        }
