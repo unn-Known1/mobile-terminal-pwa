@@ -5,6 +5,7 @@ import path from 'path'
 
 const shells = process.platform === 'win32' ? 'powershell.exe' : (os.userInfo().shell || '/bin/bash')
 const sessions = new Map()
+const HEARTBEAT_INTERVAL = 30000 // 30 seconds heartbeat to detect stale connections
 
 export function createSession(sessionId, socket, cwd = null) {
   // Kill existing session with same id
@@ -27,8 +28,16 @@ export function createSession(sessionId, socket, cwd = null) {
     return null
   }
 
-   const session = { pty: ptyProcess, cwd: workingDir, socket, lastSeq: -1 }
-   sessions.set(sessionId, session)
+  // Heartbeat to detect if socket connection is stale
+  const heartbeat = setInterval(() => {
+    if (socket && !socket.connected) {
+      console.log(`Heartbeat detected stale socket for session ${sessionId}, cleaning up`)
+      deleteSession(sessionId)
+    }
+  }, HEARTBEAT_INTERVAL)
+
+  const session = { pty: ptyProcess, cwd: workingDir, socket, lastSeq: -1, heartbeat }
+  sessions.set(sessionId, session)
 
   ptyProcess.onData(data => {
     // Always emit with sessionId so client can route correctly
@@ -36,6 +45,8 @@ export function createSession(sessionId, socket, cwd = null) {
   })
 
   ptyProcess.onExit(({ exitCode, signal }) => {
+    // Clean up heartbeat on PTY exit
+    if (session.heartbeat) clearInterval(session.heartbeat)
     session.socket?.emit('exit', { sessionId, exitCode, signal })
     sessions.delete(sessionId)
   })
@@ -50,6 +61,8 @@ export function getSession(sessionId) {
 export function deleteSession(sessionId) {
   const session = sessions.get(sessionId)
   if (session) {
+    // Clean up heartbeat interval if it exists
+    if (session.heartbeat) clearInterval(session.heartbeat)
     try { session.pty.kill() } catch {}
     sessions.delete(sessionId)
   }

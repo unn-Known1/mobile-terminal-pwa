@@ -393,10 +393,17 @@ app.post('/api/tunnel/verify', (req, res) => {
  // File operations
 function validatePath(filePath) {
   const homeDir = process.env.HOME || '/home/' + process.env.USER
+  // Resolve symlinks and normalize path before checking
   const resolved = path.resolve(filePath)
   const homeResolved = path.resolve(homeDir)
+  // Also check if the resolved path would escape the home directory
   if (!resolved.startsWith(homeResolved)) {
     return { error: 'Access denied: path outside home directory' }
+  }
+  // Additional check: disallow parent directory references that might bypass startsWith
+  const normalized = path.normalize(resolved)
+  if (!normalized.startsWith(homeResolved)) {
+    return { error: 'Access denied: path traversal detected' }
   }
   return null
 }
@@ -709,7 +716,8 @@ io.on('connection', (socket) => {
  app.use((err, req, res, next) => {
    console.error('Unhandled error:', err)
    const status = err.status || err.statusCode || 500
-   const message = process.env.NODE_ENV === 'production' && status === 500
+   const isProduction = process.env.NODE_ENV === 'production'
+   const message = isProduction
      ? 'Internal server error'
      : (err.message || 'Internal server error')
    if (!res.headersSent) {
