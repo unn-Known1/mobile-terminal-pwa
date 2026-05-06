@@ -182,12 +182,24 @@ app.post('/api/tunnel/start', async (req, res) => {
   const cloudflaredPath = process.env.CLOUDFARED || path.join(process.env.HOME || '/home/' + process.env.USER, '.cloudflared', 'cloudflared')
 
   // Verify cloudflared binary exists and is executable
+  // CWE-20: Validate executable status with specific error messages
   try {
+    // Check file exists first
+    fs.accessSync(cloudflaredPath, fs.constants.F_OK)
+  } catch (e) {
+    tunnelActive = false
+    return res.json({
+      error: `cloudflared binary not found at ${cloudflaredPath}. Run ./tunnel.sh to install.`
+    })
+  }
+
+  try {
+    // Check executable permission
     fs.accessSync(cloudflaredPath, fs.constants.X_OK)
   } catch (e) {
     tunnelActive = false
-    return res.json({ 
-      error: `cloudflared not found or not executable at ${cloudflaredPath}. Run ./tunnel.sh to install.` 
+    return res.json({
+      error: `cloudflared binary found but not executable. Check file permissions with: chmod +x ${cloudflaredPath}`
     })
   }
 

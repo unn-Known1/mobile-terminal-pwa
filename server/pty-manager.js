@@ -33,6 +33,7 @@ export function createSession(sessionId, socket, cwd = null) {
     console.error(`PTY error for session ${sessionId}:`, err.message);
     socket?.emit('error', { sessionId, error: err.message });
   });
+
   // Heartbeat to detect if socket connection is stale
   const heartbeat = setInterval(() => {
     if (socket && !socket.connected) {
