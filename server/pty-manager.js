@@ -4,6 +4,8 @@ import fs from 'fs'
 import path from 'path'
 
 const shells = process.platform === 'win32' ? 'powershell.exe' : (os.userInfo().shell || '/bin/bash')
+// Force bash if available to avoid /bin/sh issues with PTY
+const shellToUse = process.platform !== 'win32' && fs.existsSync('/bin/bash') ? '/bin/bash' : shells
 const sessions = new Map()
 const HEARTBEAT_INTERVAL = 30000 // 30 seconds heartbeat to detect stale connections
 
@@ -89,15 +91,14 @@ export function createSession(sessionId, socket, cwd = null) {
 
   let ptyProcess
   try {
-    ptyProcess = pty.spawn(shells, [], {
+    // Spawn bash shell directly with PTY
+    // This is the most reliable method for node-pty
+    ptyProcess = pty.spawn(shellToUse, [], {
       name: 'xterm-256color',
       cols: 80,
       rows: 30,
       cwd: workingDir,
       env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
-      // FIX: Ignore SIGHUP to prevent terminal from exiting when connection is lost
-      // This allows sessions to survive brief disconnections
-      // Note: This is a node-pty specific option
     })
   } catch (err) {
     console.error('PTY spawn failed:', err)
@@ -177,10 +178,21 @@ export function getAllSessions() {
 
 export function reconnectSession(sessionId, socket, cwd = null) {
   const existingSession = sessions.get(sessionId)
-  // Fix B13: Use public exitCode property instead of private _exited
+  // Check if PTY is still alive (check both exitCode and signal)
   let isExited = true
   try {
-    isExited = existingSession?.pty?.exitCode !== null
+    // Check exitCode - set when process exits normally
+    if (existingSession?.pty?.exitCode !== null && existingSession?.pty?.exitCode !== undefined) {
+      isExited = true
+    }
+    // Also check signal - set when process is killed by signal (e.g., SIGHUP)
+    else if (existingSession?.pty?.signal !== null && existingSession?.pty?.signal !== undefined) {
+      isExited = true
+    }
+    // If neither is set, process is still alive
+    else {
+      isExited = false
+    }
   } catch {}
 
   if (existingSession && existingSession.pty && !isExited) {

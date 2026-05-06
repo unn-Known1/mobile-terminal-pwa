@@ -200,8 +200,17 @@ app.get('/api/ls', (req, res) => {
   }
 
   const homeResolved = path.resolve(homeDir)
-  if (!resolvedPath.startsWith(homeResolved + path.sep) && resolvedPath !== homeResolved) {
+
+  // FIX: Allow root path '/' or paths that resolve to home directory
+  // This handles the case when client sends '/' as initial path
+  if (!resolvedPath.startsWith(homeResolved + path.sep) && resolvedPath !== homeResolved && resolvedPath !== '/') {
+    console.warn(`[SECURITY] Path traversal attempt blocked: ${queryPath} -> ${resolvedPath}`)
     return res.status(403).json({ error: 'Access denied: path outside home directory' })
+  }
+
+  // If path is root but home is different, use home directory
+  if (resolvedPath === '/' && homeResolved !== '/') {
+    resolvedPath = homeResolved
   }
 
   res.json(listDirectory(resolvedPath))
@@ -243,10 +252,17 @@ app.get('/api/ls/*', (req, res) => {
   }
 
   const homeResolved = path.resolve(homeDir)
-  // Final check: resolved path must be within home directory
-  if (!resolvedPath.startsWith(homeResolved + path.sep) && resolvedPath !== homeResolved) {
+
+  // FIX: Allow root path '/' or paths that resolve to home directory
+  // This handles the case when client sends '/' as initial path
+  if (!resolvedPath.startsWith(homeResolved + path.sep) && resolvedPath !== homeResolved && resolvedPath !== '/') {
     console.warn(`[SECURITY] Path traversal attempt blocked: ${pathInput} -> ${resolvedPath}`)
     return res.status(403).json({ error: 'Access denied: path outside home directory' })
+  }
+
+  // If path is root but home is different, use home directory
+  if (resolvedPath === '/' && homeResolved !== '/') {
+    resolvedPath = homeResolved
   }
 
   res.json(listDirectory(resolvedPath))
@@ -838,10 +854,17 @@ io.on('connection', (socket) => {
     const existingSession = getSession(sessionId)
     // Check if session exists and PTY is still alive
     if (existingSession && existingSession.pty) {
-      // Check if session has an exitCode (node-pty internal) safely
+      // Check if PTY has exited (either via exitCode or signal like SIGHUP)
       let isExited = false
       try {
-        isExited = existingSession.pty.exitCode !== null
+        // Check exitCode - set when process exits normally
+        if (existingSession.pty.exitCode !== null && existingSession.pty.exitCode !== undefined) {
+          isExited = true
+        }
+        // Also check signal - set when process is killed by signal (e.g., SIGHUP)
+        if (existingSession.pty.signal !== null && existingSession.pty.signal !== undefined) {
+          isExited = true
+        }
       } catch {}
 
       if (!isExited) {
@@ -866,10 +889,17 @@ io.on('connection', (socket) => {
      // Check if session already exists
      const existingSession = getSession(sessionId)
      if (existingSession && existingSession.pty) {
-       // Check if PTY is still alive
+       // Check if PTY is still alive (check both exitCode and signal)
        let isExited = false
        try {
-         isExited = existingSession.pty.exitCode !== null
+         // Check exitCode - set when process exits normally
+         if (existingSession.pty.exitCode !== null && existingSession.pty.exitCode !== undefined) {
+           isExited = true
+         }
+         // Also check signal - set when process is killed by signal (e.g., SIGHUP)
+         if (existingSession.pty.signal !== null && existingSession.pty.signal !== undefined) {
+           isExited = true
+         }
        } catch {}
 
        if (!isExited) {
