@@ -56,7 +56,31 @@ function getSharedSocket(url) {
       }
     }, 5000)
   }
+
+  // Fix B15: Keep track of whether we've cleaned up
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    if (_latencyInterval) {
+      clearInterval(_latencyInterval)
+      _latencyInterval = null
+    }
+  }
+
   return _socket
+}
+
+// Fix B15: Export cleanup function for manual cleanup
+export function cleanupSocket() {
+  if (_latencyInterval) {
+    clearInterval(_latencyInterval)
+    _latencyInterval = null
+  }
+  if (_socket) {
+    _socket.disconnect()
+    _socket = null
+  }
 }
 
 export function useSocket(url) {

@@ -40,11 +40,16 @@ export default function CodeEditor({ filePath, onClose }) {
     if (!filePath) return
     setSaving(true)
     try {
-      await fetch('/api/file/write', {
+      const res = await fetch('/api/file/write', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: filePath, content })
+        body: JSON.stringify({ path: filePath, content: content ?? '' })  // Fix B11: ensure content is never undefined
       })
+      const data = await res.json()
+      // Fix B08: check response for errors before clearing modified
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'Save failed')
+      }
       setModified(false)
     } catch (err) { alert(err.message) }
     setSaving(false)
@@ -90,7 +95,7 @@ export default function CodeEditor({ filePath, onClose }) {
                 height="100%"
                 language={lang}
                 value={content}
-                onChange={(val) => { setContent(val); setModified(true); }}
+                onChange={(val) => { setContent(val ?? ''); setModified(true); }}
                 theme="vs-dark"
                 onMount={(editor) => {
                   // Add id/name to Monaco's hidden textarea to satisfy autofill warnings

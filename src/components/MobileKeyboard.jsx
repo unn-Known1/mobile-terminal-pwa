@@ -50,8 +50,8 @@ export default function MobileKeyboard({ onKey }) {
               <button
                 key={k.label}
                 className={`kb-key${k.accent ? ' accent' : ''}`}
+                // Fix B06: Use only onPointerDown (handles both mouse and touch)
                 onPointerDown={e => { e.preventDefault(); onKey(k.value) }}
-                onTouchStart={e => { e.preventDefault(); onKey(k.value) }}
               >
                 {k.label}
               </button>
@@ -71,7 +71,6 @@ export default function MobileKeyboard({ onKey }) {
                   key={k.label}
                   className={`kb-key${k.accent ? ' accent' : ''}`}
                   onPointerDown={e => { e.preventDefault(); onKey(k.value) }}
-                  onTouchStart={e => { e.preventDefault(); onKey(k.value) }}
                 >
                   {k.label}
                 </button>

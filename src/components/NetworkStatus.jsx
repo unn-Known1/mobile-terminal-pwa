@@ -1,22 +1,12 @@
-import { useState, useEffect } from 'react'
 import { WifiOff, Signal, Zap } from 'lucide-react'
 
 export default function NetworkStatus({ connected, latency, reconnectCount }) {
-  const [status, setStatus] = useState('disconnected')
-
-  useEffect(() => {
-    if (!connected) {
-      setStatus('disconnected')
-    } else if (latency < 100) {
-      setStatus('excellent')
-    } else if (latency < 300) {
-      setStatus('good')
-    } else if (latency < 500) {
-      setStatus('poor')
-    } else {
-      setStatus('very-poor')
-    }
-  }, [connected, latency])
+  // Fix B18: Compute status as plain variable instead of useState/useEffect
+  const status = !connected ? 'disconnected'
+    : latency < 100 ? 'excellent'
+    : latency < 300 ? 'good'
+    : latency < 500 ? 'poor'
+    : 'very-poor'
 
   if (!connected) {
     return (

@@ -1,7 +1,7 @@
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import { createSession, deleteSession, getSession, listDirectory } from './pty-manager.js'
+import { createSession, deleteSession, getSession, getAllSessions, listDirectory } from './pty-manager.js'
 import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -28,23 +28,41 @@ let tunnelPin = null
 let tunnelUrl = null
 let tunnelActive = false
 
+// API auth middleware - check tunnel token for protected API routes
+function apiAuth(req, res, next) {
+  if (!tunnelActive) return next()
+
+  const headerToken = req.headers['x-tunnel-token']
+  const queryToken = req.query.token
+  const cookieToken = req.cookies?.tunnel_token
+
+  if (headerToken && validTokens.has(headerToken)) return next()
+  if (queryToken && validTokens.has(queryToken)) return next()
+  if (cookieToken && validTokens.has(cookieToken)) return next()
+
+  // Allow tunnel management APIs without auth (they verify PIN)
+  if (req.path.startsWith('/api/tunnel/verify')) return next()
+
+  return res.status(401).json({ error: 'Authentication required' })
+}
+
 function checkToken(req, res, next) {
   // Allow if no tunnel is active
   if (!tunnelActive) {
     return next()
   }
-  
-  // Allow API routes always (they handle their own auth via headers)
-  if (req.path.startsWith('/api/') || req.path === '/socket.io' || req.path.startsWith('/socket.io/')) {
+
+  // Allow Socket.IO always (auth handled via token in handshake)
+  if (req.path === '/socket.io' || req.path.startsWith('/socket.io/')) {
     return next()
   }
-  
+
   // Check for token in x-tunnel-token header (from sessionStorage)
   const headerToken = req.headers['x-tunnel-token']
   if (headerToken && validTokens.has(headerToken)) {
     return next()
   }
-  
+
   // Check for token in query string (initial load with token)
   const queryToken = req.query.token
   if (queryToken && validTokens.has(queryToken)) {
@@ -52,13 +70,13 @@ function checkToken(req, res, next) {
     req.tunnelToken = queryToken
     return next()
   }
-  
+
   // Check for token in cookie
   const cookieToken = req.cookies?.tunnel_token
   if (cookieToken && validTokens.has(cookieToken)) {
     return next()
   }
-  
+
   // Serve PIN entry page
   return res.send(`
 <!DOCTYPE html>
@@ -122,6 +140,9 @@ function checkToken(req, res, next) {
   `)
 }
 
+// Apply API auth middleware to all API routes
+app.use('/api', apiAuth)
+
 app.use(checkToken)
 app.use(express.static(path.join(__dirname, '../dist')))
 
@@ -134,16 +155,28 @@ app.get('/api/ls', (req, res) => {
 })
 
 app.get('/api/ls/*', (req, res) => {
-  const pathParam = req.params[0] || ''
   const homeDir = process.env.HOME || '/home/' + process.env.USER
+
+  // Fix B04: Support both query param and path param
+  // Client sends ?path=... but we also accept /api/ls/some/dir
+  const queryPath = req.query.path
+  const pathParam = req.params[0] || ''
+  const pathInput = queryPath || pathParam
 
   // Build target path - disallow empty or absolute paths from param
   let targetPath
-  if (!pathParam || pathParam.trim() === '') {
+  if (!pathInput || pathInput.trim() === '') {
     targetPath = homeDir
   } else {
-    // Join with homeDir to create a safe base path
-    targetPath = path.join(homeDir, pathParam)
+    // For query path, validate it's a relative path
+    // For path param, join with homeDir
+    if (queryPath) {
+      // Query param - should be relative, prepend homeDir
+      targetPath = path.join(homeDir, queryPath)
+    } else {
+      // Path param - already processed
+      targetPath = path.join(homeDir, pathParam)
+    }
   }
 
   // Security fix: Use realpathSync to resolve ALL symlinks (including symlinks
@@ -159,7 +192,7 @@ app.get('/api/ls/*', (req, res) => {
   const homeResolved = path.resolve(homeDir)
   // Final check: resolved path must be within home directory
   if (!resolvedPath.startsWith(homeResolved + path.sep) && resolvedPath !== homeResolved) {
-    console.warn(`[SECURITY] Path traversal attempt blocked: ${pathParam} -> ${resolvedPath}`)
+    console.warn(`[SECURITY] Path traversal attempt blocked: ${pathInput} -> ${resolvedPath}`)
     return res.status(403).json({ error: 'Access denied: path outside home directory' })
   }
 
@@ -204,7 +237,8 @@ app.post('/api/tunnel/start', async (req, res) => {
   const targetPort = process.env.TUNNEL_TARGET_PORT ||
     (process.env.NODE_ENV === 'production' ? (server.address()?.port || PORT) : 5173)
 
-  const cloudflaredPath = process.env.CLOUDFARED || path.join(process.env.HOME || '/home/' + process.env.USER, '.cloudflared', 'cloudflared')
+  // Fix B12: Correct env var name is CLOUDFLARED (not CLOUDFARED)
+  const cloudflaredPath = process.env.CLOUDFLARED || path.join(process.env.HOME || '/home/' + process.env.USER, '.cloudflared', 'cloudflared')
 
   // Verify cloudflared binary exists and is executable
   // CWE-20: Validate executable status with specific error messages
@@ -281,9 +315,12 @@ app.post('/api/tunnel/start', async (req, res) => {
     const maybeSendUrl = () => {
       if (urlSent || res.headersSent) return
       const foundUrl = extractUrl(fullOutput)
-      if (foundUrl) {
+      if (foundUrl && !url) {
         console.log('[TUNNEL] URL found in output:', foundUrl)
         url = foundUrl
+        // Clear any previous pending timeout before setting new one
+        // Fix B05: prevent leaked setTimeout by clearing old timer first
+        if (pendingTimeout) clearTimeout(pendingTimeout)
         // Wait 3 seconds for tunnel to establish before sending response
         pendingTimeout = setTimeout(() => {
           sendUrlResponse(foundUrl)
@@ -348,7 +385,9 @@ app.post('/api/tunnel/start', async (req, res) => {
       }
     })
 
-    const timeoutMs = parseInt(process.env.TUNNEL_TIMEOUT) * 1000 || 90000
+    const parsedTimeout = parseInt(process.env.TUNNEL_TIMEOUT)
+    // Fix B10: Use nullish coalescing instead of OR to allow TUNNEL_TIMEOUT=0
+    const timeoutMs = Number.isFinite(parsedTimeout) ? parsedTimeout * 1000 : 90000
     const timeoutId = setTimeout(() => {
       if (!urlSent && !res.headersSent) {
         const lastLines = outputLines.slice(-10).join('\n')
@@ -609,11 +648,9 @@ app.post('/api/file/move', (req, res) => {
         }
       }
       const stats = fs.statSync(p)
-      if (stats.isDirectory()) {
-        fs.renameSync(p, destPath)
-      } else {
-        fs.renameSync(p, destPath)
-      }
+      // Fix B09: Remove redundant if/else - both branches did the same thing
+      // For cross-device moves, this may throw EXDEV but that's expected behavior
+      fs.renameSync(p, destPath)
     }
     res.json({ ok: true })
   } catch (err) {
@@ -688,19 +725,31 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id)
   const socketSessions = new Set()
 
-  // Try to reconnect existing sessions for this socket
-  // This handles page reload scenarios
+  // Fix B03: Only reconnect sessions that belong to THIS socket
+  // Do NOT hijack sessions from other sockets
   const existingSessions = getAllSessions()
   existingSessions.forEach(sessionId => {
     const existingSession = getSession(sessionId)
-    // Reconnect sessions that had this socket ID or match reconnection patterns
-    // Simple heuristic: reconnect all sessions on new socket connection
-    // The client will send session IDs it wants to resume
-    if (existingSession && existingSession.pty && !existingSession.pty._exited) {
-      // Update socket reference but keep the PTY alive
-      existingSession.socket = socket
-      console.log(`Reconnected existing session ${sessionId} to socket ${socket.id}`)
-      socketSessions.add(sessionId)
+    // Only reassign if session doesn't already have a socket, or has the same socket ID
+    // This prevents new clients from stealing existing sessions
+    if (existingSession && existingSession.pty) {
+      // Check if session has an exitCode (node-pty internal) safely
+      let isExited = false
+      try {
+        isExited = existingSession.pty.exitCode !== null
+      } catch {}
+
+      if (!isExited) {
+        // Only claim sessions that were created by this socket
+        if (!existingSession.socketId || existingSession.socketId === socket.id) {
+          existingSession.socket = socket
+          existingSession.socketId = socket.id
+          console.log(`Reconnected session ${sessionId} to socket ${socket.id}`)
+          socketSessions.add(sessionId)
+        } else {
+          console.log(`Session ${sessionId} belongs to socket ${existingSession.socketId}, not claiming`)
+        }
+      }
     }
   })
 

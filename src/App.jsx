@@ -44,11 +44,11 @@ async function sendNotification(title, body) {
 }
 
 export default function App() {
-  const initial = loadSession()
-  const [tabs, setTabs] = useState(initial.tabs)
-  const [activeTab, setActiveTab] = useState(initial.activeTab)
-  const [explorerOpen, setExplorerOpen] = useState(initial.explorerOpen)
-  const [currentPath, setCurrentPath] = useState(initial.currentPath)
+  // Fix B16: Use lazy initializer to avoid running loadSession() on every render
+  const [tabs, setTabs] = useState(() => loadSession().tabs)
+  const [activeTab, setActiveTab] = useState(() => loadSession().activeTab)
+  const [explorerOpen, setExplorerOpen] = useState(() => loadSession().explorerOpen)
+  const [currentPath, setCurrentPath] = useState(() => loadSession().currentPath)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [splitMode, setSplitMode] = useState(false)
   const [splitOrientation, setSplitOrientation] = useState('horizontal')

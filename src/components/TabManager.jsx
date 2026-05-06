@@ -75,7 +75,8 @@ const TabButton = memo(function TabButton({
           {tab.color && <span className="tab-color-dot" style={{ backgroundColor: tab.color }} />}
           <span className="tab-icon"><Terminal size={14} /></span>
           <span>{tab.name}</span>
-          {tab.id !== isActive && tabStatuses[tab.id] && (
+          {/* Fix B07: status bubble should NOT show on active tab */}
+          {!isActive && tabStatuses[tab.id] && (
             <span className={`status-bubble ${tabStatuses[tab.id]}`} title={tabStatuses[tab.id]} />
           )}
         </>

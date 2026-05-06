@@ -43,7 +43,14 @@ export function createSession(sessionId, socket, cwd = null) {
     }
   }, HEARTBEAT_INTERVAL)
 
-  const session = { pty: ptyProcess, cwd: workingDir, socket, lastSeq: -1, heartbeat }
+  const session = {
+    pty: ptyProcess,
+    cwd: workingDir,
+    socket,
+    socketId: socket?.id,  // Track which socket owns this session
+    lastSeq: -1,
+    heartbeat
+  }
   sessions.set(sessionId, session)
 
   ptyProcess.onData(data => {
@@ -91,9 +98,16 @@ export function getAllSessions() {
 
 export function reconnectSession(sessionId, socket, cwd = null) {
   const existingSession = sessions.get(sessionId)
-  if (existingSession && existingSession.pty && !existingSession.pty._exited) {
+  // Fix B13: Use public exitCode property instead of private _exited
+  let isExited = true
+  try {
+    isExited = existingSession?.pty?.exitCode !== null
+  } catch {}
+
+  if (existingSession && existingSession.pty && !isExited) {
     // Session still alive, just reconnect the socket
     existingSession.socket = socket
+    existingSession.socketId = socket?.id
     // Emit current PTY state
     socket?.emit('data', { sessionId, data: '' }) // Signal reconnection complete
     return existingSession
