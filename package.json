@@ -14,6 +14,7 @@
     "electron": "electron .",
     "build:win": "npm run build && electron-builder --win",
     "build:linux": "npm run build && electron-builder --linux",
+    "build:mac": "npm run build && electron-builder --mac",
     "build:all": "npm run build && electron-builder --win --linux",
     "build:deb": "npm run build && electron-builder --linux deb"
   },
