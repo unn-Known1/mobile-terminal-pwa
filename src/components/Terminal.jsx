@@ -401,16 +401,29 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       socket.emit('resize', { sessionId, cols, rows })
     })
 
-    // Cleanup
+    // Track if this is a reconnection (session already exists)
+    let isReconnect = false
+    const onConnectCheck = () => {
+      // Check if session already existed by checking if session-ready was already received
+      isReconnect = true
+    }
+    socket.on('connect', onConnectCheck)
+    if (socket.connected) isReconnect = true
+
+    // Cleanup - DON'T close session on unmount to preserve it for reconnection
+    // Sessions are now managed server-side and persist across reconnections
     return () => {
       socket.off('connect', onConnect)
       socket.off('disconnect', onDisconnect)
       socket.off('data', onData)
       socket.off('exit', onExit)
       socket.off('session-ready', onSessionReady)
+      socket.off('connect', onConnectCheck)
       // Fix: Check if resizeDispose exists before disposing
       resizeDispose?.dispose()
-      socket.emit('close-session', { sessionId })
+      // NOTE: We intentionally do NOT emit 'close-session' here anymore
+      // Sessions are now persistent and will be cleaned up by the session reaper
+      // or when explicitly requested via the close-tab button
     }
   }, [socket, sessionId, cwd, onStatusChange])
 

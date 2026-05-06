@@ -177,7 +177,34 @@ io.use((socket, next) => {
 // Directory listing API
 app.get('/api/ls', (req, res) => {
   const homeDir = process.env.HOME || '/home/' + process.env.USER
-  res.json(listDirectory(homeDir))
+  const queryPath = req.query.path
+
+  let targetPath
+  if (queryPath) {
+    // FIX: Handle query path properly - check if it's absolute or relative
+    if (queryPath.startsWith('/')) {
+      targetPath = queryPath
+    } else {
+      targetPath = path.join(homeDir, queryPath)
+    }
+  } else {
+    targetPath = homeDir
+  }
+
+  // Security check
+  let resolvedPath
+  try {
+    resolvedPath = fs.realpathSync(targetPath)
+  } catch {
+    resolvedPath = path.resolve(targetPath)
+  }
+
+  const homeResolved = path.resolve(homeDir)
+  if (!resolvedPath.startsWith(homeResolved + path.sep) && resolvedPath !== homeResolved) {
+    return res.status(403).json({ error: 'Access denied: path outside home directory' })
+  }
+
+  res.json(listDirectory(resolvedPath))
 })
 
 app.get('/api/ls/*', (req, res) => {
@@ -194,14 +221,14 @@ app.get('/api/ls/*', (req, res) => {
   if (!pathInput || pathInput.trim() === '') {
     targetPath = homeDir
   } else {
-    // For query path, validate it's a relative path
-    // For path param, join with homeDir
-    if (queryPath) {
-      // Query param - should be relative, prepend homeDir
-      targetPath = path.join(homeDir, queryPath)
+    // FIX: Handle both absolute paths (from query) and relative paths (from path param)
+    // Check if pathInput is absolute (starts with /)
+    if (pathInput.startsWith('/')) {
+      // Absolute path - use it directly
+      targetPath = pathInput
     } else {
-      // Path param - already processed
-      targetPath = path.join(homeDir, pathParam)
+      // Relative path - join with homeDir
+      targetPath = path.join(homeDir, pathInput)
     }
   }
 

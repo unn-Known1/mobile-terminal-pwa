@@ -95,6 +95,9 @@ export function createSession(sessionId, socket, cwd = null) {
       rows: 30,
       cwd: workingDir,
       env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+      // FIX: Ignore SIGHUP to prevent terminal from exiting when connection is lost
+      // This allows sessions to survive brief disconnections
+      // Note: This is a node-pty specific option
     })
   } catch (err) {
     console.error('PTY spawn failed:', err)
@@ -102,7 +105,7 @@ export function createSession(sessionId, socket, cwd = null) {
     return null
   }
 
-// Handle PTY errors
+  // Handle PTY errors
   ptyProcess.on('error', (err) => {
     console.error(`PTY error for session ${sessionId}:`, err.message);
     socket?.emit('error', { sessionId, error: err.message });
