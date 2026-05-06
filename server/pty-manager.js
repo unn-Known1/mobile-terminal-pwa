@@ -28,12 +28,11 @@ export function createSession(sessionId, socket, cwd = null) {
     return null
   }
 
-  // Handle PTY errors
+// Handle PTY errors
   ptyProcess.on('error', (err) => {
     console.error(`PTY error for session ${sessionId}:`, err.message);
     socket?.emit('error', { sessionId, error: err.message });
   });
-
   // Heartbeat to detect if socket connection is stale
   const heartbeat = setInterval(() => {
     if (socket && !socket.connected) {
@@ -92,6 +91,20 @@ export function deleteSession(sessionId) {
 
 export function getAllSessions() {
   return Array.from(sessions.keys())
+}
+
+export function reconnectSession(sessionId, socket, cwd = null) {
+  const existingSession = sessions.get(sessionId)
+  if (existingSession && existingSession.pty && !existingSession.pty._exited) {
+    // Session still alive, just reconnect the socket
+    existingSession.socket = socket
+    // Emit current PTY state
+    socket?.emit('data', { sessionId, data: '' }) // Signal reconnection complete
+    return existingSession
+  }
+
+  // Session dead or doesn't exist, create new one
+  return createSession(sessionId, socket, cwd)
 }
 
 export function listDirectory(dirPath) {
