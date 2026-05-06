@@ -49,7 +49,7 @@ const parseApiResponse = async (res) => {
   return data
 }
 
-export default function FileExplorer({ isOpen, currentPath = '/', onNavigate, onOpenTerminal, onOpenFile }) {
+export default function FileExplorer({ isOpen, currentPath = '/', terminalCwd = null, onNavigate, onOpenTerminal, onOpenFile }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -224,7 +224,9 @@ export default function FileExplorer({ isOpen, currentPath = '/', onNavigate, on
   }
 
   const navigateToRoot = () => {
-    onNavigate('/')
+    // Navigate to terminal's current working directory if available, otherwise root
+    const targetPath = terminalCwd || '/'
+    onNavigate(targetPath)
   }
 
   // Get path segments for clickable navigation
@@ -397,7 +399,7 @@ export default function FileExplorer({ isOpen, currentPath = '/', onNavigate, on
         <button className="back-btn" onClick={goBack} title="Go back" disabled={currentPath === '/'}>
           <ChevronLeft size={16} />
         </button>
-        <button className="home-btn" onClick={navigateToRoot} title="Go to root (/)">
+        <button className="home-btn" onClick={navigateToRoot} title={terminalCwd ? `Go to terminal's directory (${terminalCwd})` : 'Go to root (/)'}>
           <Home size={16} />
         </button>
         <div className="clickable-path">

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Terminal from './Terminal'
 import { X, Plus, ChevronDown, Split, Columns2, Rows2 } from 'lucide-react'
 
-export default function SplitTerminal({ tabs = [], activeTab, fontSize, theme, tabStatuses, onStatusChange, orientation, onOrientationChange }) {
+export default function SplitTerminal({ tabs = [], activeTab, fontSize, theme, tabStatuses, onStatusChange, orientation, onOrientationChange, onCwdChange }) {
   const [splits, setSplits] = useState([{ id: 'main', tabId: activeTab }])
   const [dropdownOpen, setDropdownOpen] = useState(null)
 
@@ -119,6 +119,7 @@ export default function SplitTerminal({ tabs = [], activeTab, fontSize, theme, t
                 fontSize={fontSize}
                 theme={theme}
                 onStatusChange={onStatusChange}
+                onCwdChange={onCwdChange}
               />
             </div>
           )

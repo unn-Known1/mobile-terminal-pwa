@@ -9,7 +9,7 @@ import { useCommandHistory } from '../hooks/useCommandHistory'
 import MobileKeyboard from './MobileKeyboard'
 import ContextMenu from './ContextMenu'
 
-export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, onStatusChange }) {
+export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, onStatusChange, onCwdChange }) {
   const containerRef = useRef(null)
   const termRef = useRef(null)
   const fitAddonRef = useRef(null)
@@ -277,10 +277,13 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       window.removeEventListener('resize', handleResize)
       container.removeEventListener('contextmenu', handleContextMenu)
       container.removeEventListener('mousedown', handleMouseDown)
-      bellDisposable.dispose()
-      keyHandlerDisposable.dispose()
-      dataDisposable.dispose()
-      term.dispose()
+      // Fix: Check if disposables exist before calling dispose()
+      bellDisposable?.dispose()
+      keyHandlerDisposable?.dispose()
+      dataDisposable?.dispose()
+      try {
+        term.dispose()
+      } catch {}
       termRef.current = null
       fitAddonRef.current = null
       searchAddonRef.current = null
@@ -373,8 +376,8 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       }
     }
 
-    // Session ready
-    const onSessionReady = ({ sessionId: sid }) => {
+    // Session ready - notify parent of actual cwd
+    const onSessionReady = ({ sessionId: sid, cwd: sessionCwd }) => {
       if (sid === sessionId) {
         try { fitAddonRef.current?.fit() } catch {}
         socket.emit('resize', {
@@ -382,6 +385,10 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
           cols: term.cols,
           rows: term.rows,
         })
+        // Notify parent of the cwd so it can be saved for persistence
+        if (sessionCwd && onCwdChange) {
+          onCwdChange(sessionId, sessionCwd)
+        }
       }
     }
 
@@ -401,7 +408,8 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       socket.off('data', onData)
       socket.off('exit', onExit)
       socket.off('session-ready', onSessionReady)
-      resizeDispose.dispose()
+      // Fix: Check if resizeDispose exists before disposing
+      resizeDispose?.dispose()
       socket.emit('close-session', { sessionId })
     }
   }, [socket, sessionId, cwd, onStatusChange])

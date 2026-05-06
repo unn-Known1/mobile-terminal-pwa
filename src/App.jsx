@@ -103,6 +103,26 @@ export default function App() {
     })
   }, [activeTab, tabs])
 
+  // Handle cwd change from terminal to persist it
+  const handleCwdChange = useCallback((sessionId, cwd) => {
+    setTabs(prev => {
+      const updated = prev.map(tab =>
+        tab.id === sessionId ? { ...tab, cwd } : tab
+      )
+      // Immediately save to localStorage
+      try {
+        const session = {
+          tabs: updated,
+          activeTab,
+          explorerOpen,
+          currentPath
+        }
+        localStorage.setItem('terminal-session', JSON.stringify(session))
+      } catch {}
+      return updated
+    })
+  }, [activeTab, explorerOpen, currentPath])
+
   const handleNewTab = (cwd = null, name = null, color = null) => {
     const id = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
     const tabName = name || `Terminal ${tabs.length + 1}`
@@ -209,6 +229,7 @@ export default function App() {
         <FileExplorer
           isOpen={explorerOpen}
           currentPath={currentPath}
+          terminalCwd={tabs.find(t => t.id === activeTab)?.cwd}
           onNavigate={setCurrentPath}
           onOpenTerminal={handleOpenTerminal}
           onOpenFile={setEditorFile}
@@ -224,6 +245,7 @@ export default function App() {
               onStatusChange={updateTabStatus}
               orientation={splitOrientation}
               onOrientationChange={setSplitOrientation}
+              onCwdChange={handleCwdChange}
             />
           ) : (
             tabs.filter(tab => tab.id === activeTab).map(tab => (
@@ -234,6 +256,7 @@ export default function App() {
                 fontSize={fontSize}
                 theme={THEMES[theme]}
                 onStatusChange={updateTabStatus}
+                onCwdChange={handleCwdChange}
               />
             ))
           )}
