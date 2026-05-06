@@ -64,6 +64,16 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   const [contextMenu, setContextMenu] = useState(null)
   const lastClickRef = useRef({ time: 0, y: 0 })
 
+  // Scroll handler defined at component level
+  const handleScroll = useCallback(() => {
+    if (!scrollContainerRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
+    const atBottom = scrollHeight - scrollTop - clientHeight < 50
+    isAtBottomRef.current = atBottom
+    setIsAtBottom(atBottom)
+    setShowScrollHint(scrollTop > 100)
+  }, [])
+
   // Build theme
   const terminalTheme = useMemo(() => buildTheme(theme, cursorStyle), [theme, cursorStyle])
 
@@ -111,9 +121,8 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     termRef.current = term
     fitAddonRef.current = fitAddon
     searchAddonRef.current = searchAddon
-    clipboardRef.current = clipboardAddon
 
-    // Fit terminal after mount
+    // Fit terminal
     const doFit = () => {
       if (containerRef.current?.offsetWidth > 0 && containerRef.current?.offsetHeight > 0) {
         try {
@@ -172,17 +181,6 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       lastClickRef.current = { time: now, y: e.clientY }
     }
     containerRef.current.addEventListener('mousedown', handleMouseDown)
-
-    // Scroll handling
-    const handleScroll = () => {
-      if (!scrollContainerRef.current) return
-      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
-      const atBottom = scrollHeight - scrollTop - clientHeight < 50
-      isAtBottomRef.current = atBottom
-      setIsAtBottom(atBottom)
-      setShowScrollHint(scrollTop > 100)
-    }
-    scrollContainerRef.current?.addEventListener('scroll', handleScroll, { passive: true })
 
     // Bell handling - visual flash
     term.onBell(() => {

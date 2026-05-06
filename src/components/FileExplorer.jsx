@@ -1,11 +1,24 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   Folder, File, ChevronLeft, Terminal, RefreshCw, Eye, EyeOff,
-  Copy, Scissors, Clipboard, FilePlus, Download, Trash2, Edit3, X, Check, Star, Upload
+  Copy, Scissors, Clipboard, FilePlus, Download, Trash2, Edit3, X, Check, Star, Upload, ChevronRight, Home
 } from 'lucide-react'
 
 // Simple path utility functions (avoid Node.js path in browser)
 const getBasename = (p) => p.split('/').filter(Boolean).pop() || ''
+
+// Parse path into segments for clickable navigation
+const getPathSegments = (path) => {
+  if (path === '/' || path === '') return [{ name: '/', path: '/' }]
+  const parts = path.split('/').filter(Boolean)
+  const segments = []
+  let accumulated = ''
+  for (let i = 0; i < parts.length; i++) {
+    accumulated += '/' + parts[i]
+    segments.push({ name: parts[i], path: accumulated })
+  }
+  return segments
+}
 
 export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTerminal, onOpenFile }) {
   const [items, setItems] = useState([])
@@ -147,6 +160,13 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
     parts.pop()
     onNavigate(parts.length ? '/' + parts.join('/') : '/')
   }
+
+  const navigateToRoot = () => {
+    onNavigate('/')
+  }
+
+  // Get path segments for clickable navigation
+  const pathSegments = useMemo(() => getPathSegments(currentPath), [currentPath])
 
   const handleContextMenu = (e, item) => {
     e.preventDefault()
@@ -292,60 +312,78 @@ export default function FileExplorer({ isOpen, currentPath, onNavigate, onOpenTe
   return (
     <div className="file-explorer">
       <div className="explorer-header">
-        <button className="back-btn" onClick={goBack} title="Go up" disabled={currentPath === '/'}>
+        <button className="back-btn" onClick={goBack} title="Go back" disabled={currentPath === '/'}>
           <ChevronLeft size={16} />
         </button>
-        <span className="path" title={currentPath}>{currentPath}</span>
-        <button className="icon-btn-sm" onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'}>
-          {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+        <button className="home-btn" onClick={navigateToRoot} title="Go to root (/)">
+          <Home size={16} />
         </button>
-        <button className="icon-btn-sm" onClick={() => fetchDirectory(currentPath)} title="Refresh">
-          <RefreshCw size={14} className={loading ? 'spinning' : ''} />
-        </button>
-        <button className="icon-btn-sm" onClick={handleCreate} title="New file">
-          <FilePlus size={14} />
-        </button>
-        <button className="icon-btn-sm" onClick={() => handleDownload({ path: currentPath, name: getBasename(currentPath) || 'folder' })} title="Download folder">
-          <Download size={14} />
-        </button>
-        <button className="icon-btn-sm" onClick={handleCopy} disabled={!selectedItem} title="Copy">
-          <Copy size={14} />
-        </button>
-        <button className="icon-btn-sm" onClick={handleCut} disabled={!selectedItem} title="Cut">
-          <Scissors size={14} />
-        </button>
-        <button className="icon-btn-sm" onClick={handlePaste} disabled={!clipboard} title="Paste">
-          <Clipboard size={14} />
-        </button>
-        <button className="icon-btn-sm" onClick={handleRename} disabled={!selectedItem} title="Rename">
-          <Edit3 size={14} />
-        </button>
-        <button className="icon-btn-sm" onClick={toggleBookmark} title={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}>
-          {isBookmarked ? <Star size={14} fill="currentColor" /> : <Star size={14} />}
-        </button>
-        <input type="file" id="file-upload" name="file-upload" aria-label="Upload file" style={{ display: 'none' }} onChange={handleUpload} />
-        <button className="icon-btn-sm" onClick={() => document.getElementById('file-upload').click()} title="Upload file">
-          <Upload size={14} />
-        </button>
-        {selectedItems.length > 0 && (
-          <>
-            <button className="icon-btn-sm" onClick={handleMultiDownload} title="Download selected">
-              <Download size={14} />
-            </button>
-            <button className="icon-btn-sm" onClick={handleMultiCopy} title="Copy selected">
-              <Copy size={14} />
-            </button>
-            <button className="icon-btn-sm" onClick={handleMultiCut} title="Cut selected">
-              <Scissors size={14} />
-            </button>
-            <button className="icon-btn-sm" onClick={handleMultiRename} title="Batch rename">
-              <Edit3 size={14} />
-            </button>
-            <button className="icon-btn-sm" onClick={handleMultiDelete} title="Delete selected">
-              <Trash2 size={14} />
-            </button>
-          </>
-        )}
+        <div className="clickable-path">
+          {pathSegments.map((segment, index) => (
+            <span key={segment.path} className="path-segment-wrapper">
+              {index > 0 && <ChevronRight size={12} className="path-separator" />}
+              <button
+                className="path-segment"
+                onClick={() => onNavigate(segment.path)}
+                title={segment.path}
+              >
+                {segment.name}
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="header-actions">
+          <button className="icon-btn-sm" onClick={() => setShowHidden(v => !v)} title={showHidden ? 'Hide hidden files' : 'Show hidden files'}>
+            {showHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+          <button className="icon-btn-sm" onClick={() => fetchDirectory(currentPath)} title="Refresh">
+            <RefreshCw size={14} className={loading ? 'spinning' : ''} />
+          </button>
+          <button className="icon-btn-sm" onClick={handleCreate} title="New file">
+            <FilePlus size={14} />
+          </button>
+          <button className="icon-btn-sm" onClick={() => handleDownload({ path: currentPath, name: getBasename(currentPath) || 'folder' })} title="Download folder">
+            <Download size={14} />
+          </button>
+          <button className="icon-btn-sm" onClick={handleCopy} disabled={!selectedItem} title="Copy">
+            <Copy size={14} />
+          </button>
+          <button className="icon-btn-sm" onClick={handleCut} disabled={!selectedItem} title="Cut">
+            <Scissors size={14} />
+          </button>
+          <button className="icon-btn-sm" onClick={handlePaste} disabled={!clipboard} title="Paste">
+            <Clipboard size={14} />
+          </button>
+          <button className="icon-btn-sm" onClick={handleRename} disabled={!selectedItem} title="Rename">
+            <Edit3 size={14} />
+          </button>
+          <button className="icon-btn-sm" onClick={toggleBookmark} title={isBookmarked ? 'Remove bookmark' : 'Add bookmark'}>
+            {isBookmarked ? <Star size={14} fill="currentColor" /> : <Star size={14} />}
+          </button>
+          <input type="file" id="file-upload" name="file-upload" aria-label="Upload file" style={{ display: 'none' }} onChange={handleUpload} />
+          <button className="icon-btn-sm" onClick={() => document.getElementById('file-upload').click()} title="Upload file">
+            <Upload size={14} />
+          </button>
+          {selectedItems.length > 0 && (
+            <>
+              <button className="icon-btn-sm" onClick={handleMultiDownload} title="Download selected">
+                <Download size={14} />
+              </button>
+              <button className="icon-btn-sm" onClick={handleMultiCopy} title="Copy selected">
+                <Copy size={14} />
+              </button>
+              <button className="icon-btn-sm" onClick={handleMultiCut} title="Cut selected">
+                <Scissors size={14} />
+              </button>
+              <button className="icon-btn-sm" onClick={handleMultiRename} title="Batch rename">
+                <Edit3 size={14} />
+              </button>
+              <button className="icon-btn-sm" onClick={handleMultiDelete} title="Delete selected">
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div className="explorer-content" onDragOver={e => e.preventDefault()} onDrop={async (e) => {
         e.preventDefault()
