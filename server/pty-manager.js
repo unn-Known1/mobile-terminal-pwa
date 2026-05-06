@@ -67,11 +67,11 @@ function stopSessionReaper() {
   }
 }
 
-function recordSocketDisconnect(sessionId) {
+export function recordSocketDisconnect(sessionId) {
   socketDisconnectTime.set(sessionId, Date.now())
 }
 
-function clearSocketDisconnect(sessionId) {
+export function clearSocketDisconnect(sessionId) {
   socketDisconnectTime.delete(sessionId)
 }
 
