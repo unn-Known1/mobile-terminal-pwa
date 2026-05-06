@@ -649,8 +649,281 @@ html, body, #root {
   pointer-events: none;
 }
 
+/* Scroll to top */
+.scroll-to-top {
+  position: absolute;
+  top: 70px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-fast);
+  z-index: 50;
+  animation: fadeIn 0.2s ease;
+}
+
+.scroll-to-top:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent);
+  border-color: var(--accent);
+  transform: scale(1.1);
+}
+
+.scroll-to-top:active {
+  transform: scale(0.95);
+}
+
+/* Hide scroll hint when at bottom */
+.scroll-to-top.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Bell Flash Effect */
+.bell-flash {
+  animation: bellFlash 0.15s ease-out;
+}
+
+@keyframes bellFlash {
+  0% {
+    background: rgba(255, 184, 77, 0.3);
+  }
+  100% {
+    background: var(--bg-deep);
+  }
+}
+
+/* Terminal Search Bar */
+.terminal-search-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  z-index: 100;
+  box-shadow: var(--shadow-lg);
+  animation: searchBarIn 0.2s ease;
+  width: 320px;
+  max-width: calc(100% - 80px);
+}
+
+@keyframes searchBarIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.terminal-search-bar .search-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.terminal-search-bar .search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: 'IBM Plex Mono', monospace;
+  outline: none;
+  min-width: 0;
+}
+
+.terminal-search-bar .search-input::placeholder {
+  color: var(--text-dim);
+}
+
+.terminal-search-bar .search-count {
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--accent);
+  padding: 2px 8px;
+  background: var(--accent-subtle);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.terminal-search-bar .search-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.terminal-search-bar .search-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.terminal-search-bar .search-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Terminal Settings Panel */
+.terminal-settings-panel {
+  position: absolute;
+  bottom: 70px;
+  right: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  z-index: 100;
+  box-shadow: var(--shadow-lg);
+  animation: settingsPanelIn 0.2s ease;
+  min-width: 200px;
+}
+
+@keyframes settingsPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.terminal-settings-panel .settings-section {
+  margin-bottom: 16px;
+}
+
+.terminal-settings-panel .settings-section:last-of-type {
+  margin-bottom: 12px;
+}
+
+.terminal-settings-panel label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+
+.terminal-settings-panel .cursor-styles {
+  display: flex;
+  gap: 8px;
+}
+
+.terminal-settings-panel .cursor-styles button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.terminal-settings-panel .cursor-styles button:hover {
+  background: var(--bg-primary);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+.terminal-settings-panel .cursor-styles button.active {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.terminal-settings-panel .cursor-preview {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-settings-panel .cursor-preview.block {
+  background: currentColor;
+  width: 12px;
+  height: 18px;
+}
+
+.terminal-settings-panel .cursor-preview.underline {
+  width: 14px;
+  height: 3px;
+  background: currentColor;
+}
+
+.terminal-settings-panel .cursor-preview.bar {
+  width: 3px;
+  height: 16px;
+  background: currentColor;
+}
+
+.terminal-settings-panel .settings-close {
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all var(--transition-fast);
+}
+
+.terminal-settings-panel .settings-close:hover {
+  background: var(--bg-primary);
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
+/* Reconnecting Spinner */
+.reconnecting-spinner {
+  width: 40px;
+  height: 40px;
+}
+
+.reconnecting-spinner svg {
+  width: 100%;
+  height: 100%;
+  color: var(--accent);
+}
+
 @media (hover: hover) and (pointer: fine) {
-  .scroll-to-bottom {
+  .scroll-to-top {
     display: none;
   }
 }

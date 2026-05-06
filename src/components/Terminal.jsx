@@ -1,126 +1,171 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
+import { ClipboardAddon } from '@xterm/addon-clipboard'
+import { SerializeAddon } from '@xterm/addon-serialize'
+import { ImageAddon, parseImageFromContentURI } from '@xterm/addon-image'
 import '@xterm/xterm/css/xterm.css'
 import { useSocket } from '../hooks/useSocket'
 import { useCommandHistory } from '../hooks/useCommandHistory'
 import MobileKeyboard from './MobileKeyboard'
 import ContextMenu from './ContextMenu'
 
+// Readline-like keyboard shortcuts
+const READLINE_SHORTCUTS = {
+  'ctrl-a': 'beginning-of-line',
+  'ctrl-e': 'end-of-line',
+  'ctrl-u': 'kill-whole-line',
+  'ctrl-k': 'kill-line',
+  'ctrl-w': 'unix-word-rubout',
+  'ctrl-y': 'yank',
+  'ctrl-l': 'clear-screen',
+  'ctrl-c': 'interrupt',
+  'ctrl-d': 'eof',
+  'ctrl-z': 'suspend',
+  'ctrl-r': 'reverse-search',
+  'ctrl-t': 'transpose-chars',
+  'alt-t': 'transpose-words',
+  'alt-f': 'forward-word',
+  'alt-b': 'backward-word',
+  'alt-d': 'kill-word',
+  'ctrl-left': 'backward-word',
+  'ctrl-right': 'forward-word',
+  'home': 'beginning-of-line',
+  'end': 'end-of-line',
+}
+
 export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, onStatusChange }) {
   const containerRef = useRef(null)
   const termRef = useRef(null)
   const fitAddonRef = useRef(null)
+  const searchAddonRef = useRef(null)
   const scrollContainerRef = useRef(null)
+  const clipboardRef = useRef(null)
+  const searchInputRef = useRef(null)
+
   const [lastActivity, setLastActivity] = useState(Date.now())
-  const { socket, connected } = useSocket('/')
-  const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
-  const commandBufferRef = useRef('')
-  const seqRef = useRef(0)
-  const [contextMenu, setContextMenu] = useState(null)
+  const [connected, setConnected] = useState(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [showScrollHint, setShowScrollHint] = useState(false)
-  const isAtBottomRef = useRef(true)
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState({ index: -1, count: 0 })
+  const [cursorStyle, setCursorStyle] = useState('block')
+  const [showTerminalSettings, setShowTerminalSettings] = useState(false)
 
-  // Initial terminal setup
+  const isAtBottomRef = useRef(true)
+  const searchVisibleRef = useRef(false)
+  const searchMatchesRef = useRef([])
+
+  const { socket } = useSocket('/')
+  const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
+  const commandBufferRef = useRef('')
+  const yankBufferRef = useRef('')
+  const seqRef = useRef(0)
+  const [contextMenu, setContextMenu] = useState(null)
+  const lastClickRef = useRef({ time: 0, y: 0 })
+
+  // Build theme
+  const terminalTheme = useMemo(() => buildTheme(theme, cursorStyle), [theme, cursorStyle])
+
+  // Initialize terminal with all features
   useEffect(() => {
     if (!containerRef.current) return
 
     const term = new XTerm({
-      theme: buildTheme(theme),
+      theme: terminalTheme,
       fontSize,
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Hack', 'Consolas', monospace",
+      fontWeight: 'normal',
+      fontWeightBold: 'bold',
+      lineHeight: 1.2,
+      letterSpacing: 0,
       cursorBlink: true,
+      cursorInactiveStyle: 'outline',
       allowTransparency: true,
-      scrollback: 10000,
+      scrollback: 50000,
       macOptionIsMeta: true,
       disableStdin: false,
-      cursorStyle: 'block',
+      cursorStyle: cursorStyle,
+      cursorWidth: cursorStyle === 'underline' ? undefined : undefined,
       overviewRulerWidth: 0,
       convertEol: true,
+      termName: 'xterm-256color',
+      windowOptions: {
+        allowProposedApi: true,
+      },
+      allowProposedApi: true,
     })
 
-    // Enable touch scrolling options
-    term.options.scrollback = 10000
-
+    // Load addons
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
-    const webLinksAddon = new WebLinksAddon()
+    const unicode11Addon = new Unicode11Addon()
+    const clipboardAddon = new ClipboardAddon({
+      copyOnSelection: true,
+      rightClickSelectsWord: true,
+    })
+    const serializeAddon = new SerializeAddon()
+    let imageAddon
+    try {
+      imageAddon = new ImageAddon()
+    } catch (e) {
+      console.log('Image addon not available')
+    }
 
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
-    term.loadAddon(webLinksAddon)
+    term.loadAddon(unicode11Addon)
+    term.loadAddon(clipboardAddon)
+    term.loadAddon(serializeAddon)
+    if (imageAddon) term.loadAddon(imageAddon)
+
+    // Enable unicode 11
+    term.unicode.registerExtension(unicode11Addon)
+    term.unicode.activeVersion = '11'
+
     term.open(containerRef.current)
 
-    // Add id and name to xterm's hidden textarea to satisfy autofill/accessibility checks
-    // The textarea is used for mobile input capture and is created by xterm.js
-    const textarea = containerRef.current.querySelector('textarea')
-    if (textarea) {
-      const taId = `xterm-textarea-${sessionId || Math.random().toString(36).substr(2, 9)}`
-      textarea.id = taId
-      textarea.name = taId
-      // Ensure textarea is visible and accessible for touch keyboards
-      textarea.style.cssText = `
-        position: absolute;
-        opacity: 1;
-        pointer-events: auto;
-        z-index: 100;
-        font-size: ${fontSize}px;
-        font-family: 'JetBrains Mono', monospace;
-      `
-      // Focus textarea when clicked/tapped
-      containerRef.current.addEventListener('click', () => {
-        textarea.focus()
-      })
-      containerRef.current.addEventListener('touchend', () => {
-        setTimeout(() => textarea.focus(), 100)
-      })
-    }
-    
-    // Delay fit to ensure viewport is ready
+    // Store refs
+    termRef.current = term
+    fitAddonRef.current = fitAddon
+    searchAddonRef.current = searchAddon
+    clipboardRef.current = clipboardAddon
+
+    // Fit terminal after mount
     const doFit = () => {
       if (containerRef.current?.offsetWidth > 0 && containerRef.current?.offsetHeight > 0) {
-        try { fitAddon.fit() } catch {}
+        try {
+          fitAddon.fit()
+          // Send initial size
+          socket?.emit('resize', {
+            sessionId,
+            cols: term.cols,
+            rows: term.rows,
+          })
+        } catch {}
       }
     }
-    setTimeout(doFit, 100)
-     setTimeout(doFit, 300)
+    setTimeout(doFit, 50)
+    setTimeout(doFit, 200)
+    setTimeout(doFit, 500)
 
-     termRef.current = term
-      fitAddonRef.current = fitAddon
-
-      // Sync scroll position with xterm's internal scroll
-      const syncScroll = () => {
-        if (!scrollContainerRef.current) return
-        const scrollEl = scrollContainerRef.current
-        const { scrollTop, scrollHeight, clientHeight } = scrollEl
-        const atBottom = scrollHeight - scrollTop - clientHeight < 50
-        isAtBottomRef.current = atBottom
-        setIsAtBottom(atBottom)
-        
-        // Show scroll hint when scrolled up
-        setShowScrollHint(scrollTop > 100)
-      }
-
-      const onResize = () => {
-        if (containerRef.current?.offsetWidth > 0) {
-          try { fitAddon.fit() } catch {}
-          // Scroll to bottom after resize if we were at bottom
-          setTimeout(() => {
-            if (isAtBottomRef.current) {
-              const terminal = containerRef.current?.querySelector('.xterm')
-              if (terminal) terminal.scrollTop = terminal.scrollHeight
-            }
-          }, 50)
-        }
-      }
-    const ro = new ResizeObserver(onResize)
+    // Resize observer
+    const ro = new ResizeObserver(() => {
+      try { fitAddon.fit() } catch {}
+    })
     ro.observe(containerRef.current)
-    window.addEventListener('resize', onResize)
 
-    // Handle right-click context menu
+    // Window resize
+    const handleResize = () => {
+      try { fitAddon.fit() } catch {}
+    }
+    window.addEventListener('resize', handleResize)
+
+    // Context menu
     const handleContextMenu = (e) => {
       e.preventDefault()
       const selection = term.getSelection()
@@ -128,92 +173,255 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
         x: e.clientX,
         y: e.clientY,
         selection: selection,
-        hasSelection: selection.length > 0
+        hasSelection: selection.length > 0,
+        isLink: false, // Simplified for now
       })
     }
-
     containerRef.current.addEventListener('contextmenu', handleContextMenu)
 
-     // Ctrl+F → search
-     term.attachCustomKeyEventHandler(e => {
-       if (e.type === 'keydown') {
-         // Search: Ctrl+F
-         if (e.ctrlKey && e.key === 'f') {
-           const query = window.prompt('Search:')
-           if (query) searchAddon.findNext(query)
-           return false
-         }
+    // Mouse events for improved selection
+    const handleMouseDown = (e) => {
+      // Triple click - select line
+      const now = Date.now()
+      if (now - lastClickRef.current.time < 400) {
+        const deltaY = Math.abs(e.clientY - lastClickRef.current.y)
+        if (deltaY < 10) {
+          term.selectAll()
+          lastClickRef.current = { time: 0, y: 0 }
+          return
+        }
+      }
+      lastClickRef.current = { time: now, y: e.clientY }
+    }
+    containerRef.current.addEventListener('mousedown', handleMouseDown)
 
-         // Arrow Up: previous command in history
-         if (e.key === 'ArrowUp') {
-           e.preventDefault()
-           const prev = getPrevious()
-           if (prev) {
-             term.write('\r\x1b[K' + prev)
-             commandBufferRef.current = prev
-           }
-           return false
-         }
+    // Scroll handling
+    const handleScroll = () => {
+      if (!scrollContainerRef.current) return
+      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
+      const atBottom = scrollHeight - scrollTop - clientHeight < 50
+      isAtBottomRef.current = atBottom
+      setIsAtBottom(atBottom)
+      setShowScrollHint(scrollTop > 100)
+    }
+    scrollContainerRef.current?.addEventListener('scroll', handleScroll, { passive: true })
 
-         // Arrow Down: next command in history
-         if (e.key === 'ArrowDown') {
-           e.preventDefault()
-           const next = getNext()
-           if (next) {
-             term.write('\r\x1b[K' + next)
-             commandBufferRef.current = next
-           } else {
-             term.write('\r\x1b[K')
-             commandBufferRef.current = ''
-           }
-           return false
-         }
-       }
-       return true
-     })
+    // Bell handling - visual flash
+    term.onBell(() => {
+      containerRef.current?.classList.add('bell-flash')
+      setTimeout(() => containerRef.current?.classList.remove('bell-flash'), 150)
+    })
 
+    // Link handling
+    let hoveredCellRef = null
+    let tooltipTimeoutRef = null
+
+    term.onHover((event) => {
+      if (event.uri) {
+        hoveredCellRef = event
+        tooltipTimeoutRef = setTimeout(() => {
+          // Could show URL preview tooltip
+        }, 200)
+      }
+    })
+
+    term.onHoverLeave(() => {
+      clearTimeout(tooltipTimeoutRef)
+      hoveredCellRef = null
+    })
+
+    // Clear on Ctrl+L
+    term.attachCustomKeyEventHandler(e => {
+      if (e.type === 'keydown' && e.ctrlKey && e.key === 'l') {
+        term.clear()
+        return false
+      }
+
+      // Ctrl+C - interrupt with visual feedback
+      if (e.type === 'keydown' && e.ctrlKey && e.key === 'c') {
+        // Let the default behavior pass through first, then send interrupt if needed
+      }
+
+      // Ctrl+F - open search
+      if (e.type === 'keydown' && e.ctrlKey && e.key === 'f') {
+        setIsSearchOpen(true)
+        setTimeout(() => searchInputRef.current?.focus(), 50)
+        return false
+      }
+
+      // Ctrl+Shift+C - copy (native copy)
+      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && e.key === 'C') {
+        const selection = term.getSelection()
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(() => {})
+        }
+        return false
+      }
+
+      // Ctrl+Shift+V - paste (native paste)
+      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && e.key === 'V') {
+        navigator.clipboard.readText().then(text => {
+          if (text && socket) {
+            socket.emit('data', { sessionId, data: text, seq: seqRef.current++ })
+          }
+        }).catch(() => {})
+        return false
+      }
+
+      // Escape - close search
+      if (e.type === 'keydown' && e.key === 'Escape' && searchVisibleRef.current) {
+        setIsSearchOpen(false)
+        searchAddon.clearActiveSearchDecoration()
+        searchVisibleRef.current = false
+        return false
+      }
+
+      // Enter in search - find next
+      if (e.type === 'keydown' && e.key === 'Enter' && searchVisibleRef.current) {
+        if (searchMatchesRef.current.length > 0) {
+          const nextIndex = (searchResults.index + 1) % searchMatchesRef.current.length
+          searchAddon.findNext(searchQuery)
+          updateSearchResults(searchAddon, searchQuery)
+        }
+        return false
+      }
+
+      return true
+    })
+
+    // Track command input for history
+    let inputBuffer = ''
+    let inputPosition = 0
+
+    term.onData(data => {
+      // Track input for proper history navigation
+      if (data === '\r' || data === '\n') {
+        // Command submitted - add to history
+        const cmd = inputBuffer.trim()
+        if (cmd) {
+          addToHistory(cmd)
+        }
+        inputBuffer = ''
+        inputPosition = 0
+      } else if (data === '\x7f' || data === '\x08') {
+        // Backspace
+        if (inputPosition > 0) {
+          inputBuffer = inputBuffer.slice(0, -1)
+          inputPosition--
+        }
+      } else if (data.length === 1 && data >= ' ' && data <= '~') {
+        inputBuffer += data
+        inputPosition++
+      }
+    })
+
+    // Cleanup
     return () => {
       ro.disconnect()
-      window.removeEventListener('resize', onResize)
+      window.removeEventListener('resize', handleResize)
       containerRef.current?.removeEventListener('contextmenu', handleContextMenu)
+      containerRef.current?.removeEventListener('mousedown', handleMouseDown)
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null
+      searchAddonRef.current = null
+      clipboardRef.current = null
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Connect terminal to socket session
+  // Search functions
+  const updateSearchResults = useCallback((addon, query) => {
+    if (!addon || !query) {
+      setSearchResults({ index: -1, count: 0 })
+      return
+    }
+    try {
+      const result = addon.findNext(query, { decorations: true })
+      if (result) {
+        const matches = []
+        let next = addon.findNext(query, { decorations: true })
+        while (next && matches.length < 100) {
+          matches.push(next)
+          next = addon.findNext(query, { decorations: true })
+        }
+        setSearchResults({ index: 0, count: matches.length })
+        searchMatchesRef.current = matches
+      }
+    } catch {}
+  }, [])
+
+  const handleSearch = useCallback((query) => {
+    setSearchQuery(query)
+    const searchAddon = searchAddonRef.current
+    if (searchAddon && query) {
+      updateSearchResults(searchAddon, query)
+    } else {
+      setSearchResults({ index: -1, count: 0 })
+    }
+  }, [updateSearchResults])
+
+  const handleSearchKeyDown = useCallback((e) => {
+    if (e.key === 'Enter') {
+      const searchAddon = searchAddonRef.current
+      if (searchAddon && searchQuery) {
+        searchAddon.findPrevious(searchQuery, { decorations: true })
+        updateSearchResults(searchAddon, searchQuery)
+      }
+    } else if (e.key === 'Escape') {
+      setIsSearchOpen(false)
+      searchVisibleRef.current = false
+    }
+  }, [searchQuery, updateSearchResults])
+
+  // Socket connection
   useEffect(() => {
     if (!socket || !termRef.current) return
 
     const term = termRef.current
 
-    // Create PTY session for this tab
+    // Connection handlers
+    const onConnect = () => setConnected(true)
+    const onDisconnect = () => setConnected(false)
+
+    socket.on('connect', onConnect)
+    socket.on('disconnect', onDisconnect)
+
+    if (socket.connected) setConnected(true)
+
+    // Create PTY session
     socket.emit('create-tab', { sessionId, cwd })
 
+    // Data from PTY
     const onData = ({ sessionId: sid, data }) => {
       if (sid === sessionId) {
         term.write(data)
         setLastActivity(Date.now())
         onStatusChange?.(sessionId, 'notification')
-        
-        // Auto-scroll to bottom if we were at bottom
-        if (isAtBottom) {
+
+        // Auto-scroll to bottom
+        if (isAtBottomRef.current) {
           requestAnimationFrame(() => {
-            const terminal = containerRef.current?.querySelector('.xterm')
-            if (terminal) {
-              terminal.scrollTop = terminal.scrollHeight
-            }
+            scrollContainerRef.current?.scrollTo({
+              top: scrollContainerRef.current.scrollHeight,
+              behavior: 'instant'
+            })
           })
         }
       }
     }
-    const onExit = ({ sessionId: sid }) => {
+
+    // Session exit
+    const onExit = ({ sessionId: sid, exitCode, signal }) => {
       if (sid === sessionId) {
-        term.writeln('\r\n\x1b[33m[Process exited]\x1b[0m')
+        const exitMsg = signal
+          ? `\r\n\x1b[33m[Process exited with signal ${signal}]\x1b[0m`
+          : `\r\n\x1b[33m[Process exited with code ${exitCode}]\x1b[0m`
+        term.writeln(exitMsg)
         onStatusChange?.(sessionId, 'idle')
       }
     }
+
+    // Session ready
     const onSessionReady = ({ sessionId: sid }) => {
       if (sid === sessionId) {
         try { fitAddonRef.current?.fit() } catch {}
@@ -229,74 +437,52 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     socket.on('exit', onExit)
     socket.on('session-ready', onSessionReady)
 
-     const dataDispose = term.onData(data => {
-       const seq = seqRef.current++
-       socket.emit('data', { sessionId, data, seq })
-       
-       // Only track printable characters for command history
-       for (let i = 0; i < data.length; i++) {
-         const char = data[i]
-         if (char === '\r' || char === '\n') {
-           // Add to history when command is submitted
-           const cmd = commandBufferRef.current.trim()
-           if (cmd) {
-             addToHistory(cmd)
-           }
-           commandBufferRef.current = ''
-         } else if (char === '\x7f' || char === '\x08') {
-           commandBufferRef.current = commandBufferRef.current.slice(0, -1)
-         } else if (char >= ' ' && char <= '~') {
-           commandBufferRef.current += char
-         }
-       }
-     })
-
+    // Resize handler
     const resizeDispose = term.onResize(({ cols, rows }) => {
       socket.emit('resize', { sessionId, cols, rows })
     })
 
+    // Cleanup
     return () => {
+      socket.off('connect', onConnect)
+      socket.off('disconnect', onDisconnect)
       socket.off('data', onData)
       socket.off('exit', onExit)
       socket.off('session-ready', onSessionReady)
-      dataDispose.dispose()
       resizeDispose.dispose()
       socket.emit('close-session', { sessionId })
     }
-  }, [socket, sessionId, cwd])
+  }, [socket, sessionId, cwd, onStatusChange])
 
-  // Live-update fontSize without recreating terminal
+  // Font size update
   useEffect(() => {
     if (!termRef.current) return
     termRef.current.options.fontSize = fontSize
     try { fitAddonRef.current?.fit() } catch {}
   }, [fontSize])
 
-  // Live-update theme without recreating terminal
+  // Theme update
   useEffect(() => {
     if (!termRef.current) return
-    termRef.current.options.theme = buildTheme(theme)
-  }, [theme])
+    termRef.current.options.theme = terminalTheme
+  }, [terminalTheme])
 
-  // Idle status check
+  // Cursor style update
   useEffect(() => {
-    const idleCheck = setInterval(() => {
-      if (Date.now() - lastActivity > 30000) {
-        onStatusChange?.(sessionId, 'idle')
-      }
-    }, 30000)
-    return () => clearInterval(idleCheck)
-  }, [sessionId, lastActivity])
+    if (!termRef.current) return
+    termRef.current.options.cursorStyle = cursorStyle
+  }, [cursorStyle])
 
-  const handleMobileKey = (value) => {
+  // Mobile keyboard handler
+  const handleMobileKey = useCallback((value) => {
     if (socket) socket.emit('data', { sessionId, data: value, seq: seqRef.current++ })
-  }
+  }, [socket, sessionId])
 
-  // Clipboard operations for context menu
+  // Context menu handlers
   const handleCopy = useCallback(() => {
     const selection = termRef.current?.getSelection()
     if (selection) {
-      navigator.clipboard.writeText(selection).catch(console.error)
+      navigator.clipboard.writeText(selection).catch(() => {})
       termRef.current?.clearSelection()
     }
     setContextMenu(null)
@@ -305,132 +491,180 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   const handlePaste = useCallback(async () => {
     try {
       const text = await navigator.clipboard.readText()
-      if (socket && termRef.current && text) {
+      if (socket && text) {
         socket.emit('data', { sessionId, data: text, seq: seqRef.current++ })
       }
-    } catch (err) {
-      console.error('Paste failed:', err)
-    }
+    } catch {}
     setContextMenu(null)
-  }, [socket, sessionId])
-
-  // Listen for paste events from app toolbar button
-  useEffect(() => {
-    const handlePasteEvent = (e) => {
-      const text = e.detail?.text
-      if (socket && termRef.current && text) {
-        socket.emit('data', { sessionId, data: text, seq: seqRef.current++ })
-      }
-    }
-    window.addEventListener('terminal-paste', handlePasteEvent)
-    return () => window.removeEventListener('terminal-paste', handlePasteEvent)
   }, [socket, sessionId])
 
   const handleSelectAll = useCallback(() => {
-    if (termRef.current) {
-      // Select all content in terminal
-      const term = termRef.current
-      term.selectAll()
-    }
+    termRef.current?.selectAll()
     setContextMenu(null)
   }, [])
 
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null)
-  }, [])
-
-  // Scroll to bottom function
   const scrollToBottom = useCallback(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' })
-    }
+    scrollContainerRef.current?.scrollTo({
+      top: scrollContainerRef.current.scrollHeight,
+      behavior: 'smooth'
+    })
   }, [])
 
-  // Handle scroll events on the terminal
-  useEffect(() => {
-    if (!scrollContainerRef.current) return
-
-    const scrollEl = scrollContainerRef.current
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = scrollEl
-      const atBottom = scrollHeight - scrollTop - clientHeight < 50
-      setIsAtBottom(atBottom)
-      
-      // Toggle scrolled class for visual indicator
-      if (scrollTop > 50) {
-        scrollEl.classList.add('scrolled')
-      } else {
-        scrollEl.classList.remove('scrolled')
-      }
-    }
-
-    scrollEl.addEventListener('scroll', handleScroll, { passive: true })
-    
-    // Initial scroll to bottom
-    setTimeout(() => {
-      if (scrollEl) {
-        scrollEl.scrollTop = scrollEl.scrollHeight
-      }
-    }, 100)
-
-    return () => scrollEl.removeEventListener('scroll', handleScroll)
-  }, [connected])
+  const scrollToTop = useCallback(() => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
 
   return (
     <div className="terminal-wrapper">
+      {/* Connection overlay */}
       {!connected && (
         <div className="terminal-overlay">
-          <span className="reconnecting">Reconnecting…</span>
+          <div className="reconnecting-spinner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" opacity="0.25" />
+              <path d="M12 2a10 10 0 0 1 10 10" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+              </path>
+            </svg>
+          </div>
+          <span>Reconnecting…</span>
         </div>
       )}
-      <div 
-        ref={scrollContainerRef} 
+
+      {/* Search bar */}
+      {isSearchOpen && (
+        <div className="terminal-search-bar">
+          <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <path d="M21 21l-4.35-4.35" />
+          </svg>
+          <input
+            ref={searchInputRef}
+            type="text"
+            className="search-input"
+            placeholder="Search..."
+            value={searchQuery}
+            onChange={(e) => handleSearch(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+          />
+          {searchResults.count > 0 && (
+            <span className="search-count">
+              {searchResults.index + 1}/{searchResults.count}
+            </span>
+          )}
+          <button
+            className="search-close"
+            onClick={() => {
+              setIsSearchOpen(false)
+              searchAddonRef.current?.clearActiveSearchDecoration()
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Terminal container with custom scrollbar */}
+      <div
+        ref={scrollContainerRef}
         className="terminal-scroll-container"
-        onScroll={() => {
-          if (scrollContainerRef.current) {
-            const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current
-            setIsAtBottom(scrollHeight - scrollTop - clientHeight < 50)
-          }
-        }}
+        onScroll={handleScroll}
       >
         <div ref={containerRef} className="terminal-container" />
       </div>
-      
-      {/* Scroll to bottom FAB */}
+
+      {/* Scroll position indicators */}
+      {showScrollHint && isAtBottom && (
+        <button
+          className="scroll-to-top"
+          onClick={scrollToTop}
+          title="Scroll to top"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 19V5M5 12l7-7 7 7" />
+          </svg>
+        </button>
+      )}
+
       {!isAtBottom && (
-        <button 
+        <button
           className="scroll-to-bottom"
           onClick={scrollToBottom}
           title="Scroll to bottom"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12l7 7 7-7"/>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 5v14M5 12l7 7 7-7" />
           </svg>
         </button>
       )}
-      
+
+      {/* Terminal settings panel */}
+      {showTerminalSettings && (
+        <div className="terminal-settings-panel">
+          <div className="settings-section">
+            <label>Cursor Style</label>
+            <div className="cursor-styles">
+              <button
+                className={cursorStyle === 'block' ? 'active' : ''}
+                onClick={() => setCursorStyle('block')}
+              >
+                <span className="cursor-preview block" />
+                Block
+              </button>
+              <button
+                className={cursorStyle === 'underline' ? 'active' : ''}
+                onClick={() => setCursorStyle('underline')}
+              >
+                <span className="cursor-preview underline" />
+                Underline
+              </button>
+              <button
+                className={cursorStyle === 'bar' ? 'active' : ''}
+                onClick={() => setCursorStyle('bar')}
+              >
+                <span className="cursor-preview bar" />
+                Bar
+              </button>
+            </div>
+          </div>
+          <button
+            className="settings-close"
+            onClick={() => setShowTerminalSettings(false)}
+          >
+            Close
+          </button>
+        </div>
+      )}
+
+      {/* Mobile keyboard */}
       <MobileKeyboard onKey={handleMobileKey} />
+
+      {/* Context menu */}
       <ContextMenu
         x={contextMenu?.x}
         y={contextMenu?.y}
         onCopy={handleCopy}
         onPaste={handlePaste}
         onSelectAll={handleSelectAll}
-        onClose={closeContextMenu}
+        onClose={() => setContextMenu(null)}
         hasSelection={contextMenu?.hasSelection}
       />
     </div>
   )
 }
 
-function buildTheme(theme) {
+function buildTheme(theme, cursorStyle = 'block') {
+  const bg = theme?.background || '#0F172A'
+  const fg = theme?.foreground || '#F8FAFC'
   return {
-    background: theme?.background || '#0F172A',
-    foreground: theme?.foreground || '#F8FAFC',
+    background: bg,
+    foreground: fg,
     cursor: theme?.cursor || '#22C55E',
-    cursorAccent: theme?.background || '#0F172A',
-    selection: 'rgba(34, 197, 94, 0.25)',
+    cursorAccent: bg,
+    selectionBackground: 'rgba(34, 197, 94, 0.3)',
+    selectionForeground: fg,
     black: '#1E293B',
     red: '#EF4444',
     green: '#22C55E',
