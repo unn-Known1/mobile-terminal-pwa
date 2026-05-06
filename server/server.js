@@ -651,6 +651,22 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id)
   const socketSessions = new Set()
 
+  // Try to reconnect existing sessions for this socket
+  // This handles page reload scenarios
+  const existingSessions = getAllSessions()
+  existingSessions.forEach(sessionId => {
+    const existingSession = getSession(sessionId)
+    // Reconnect sessions that had this socket ID or match reconnection patterns
+    // Simple heuristic: reconnect all sessions on new socket connection
+    // The client will send session IDs it wants to resume
+    if (existingSession && existingSession.pty && !existingSession.pty._exited) {
+      // Update socket reference but keep the PTY alive
+      existingSession.socket = socket
+      console.log(`Reconnected existing session ${sessionId} to socket ${socket.id}`)
+      socketSessions.add(sessionId)
+    }
+  })
+
    // Create a PTY session for a tab
    socket.on('create-tab', ({ sessionId, cwd }) => {
      const session = createSession(sessionId, socket, cwd)

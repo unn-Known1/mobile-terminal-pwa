@@ -36,9 +36,10 @@ export function createSession(sessionId, socket, cwd = null) {
 
   // Heartbeat to detect if socket connection is stale
   const heartbeat = setInterval(() => {
+    // Check if socket is still connected - only log warnings, don't auto-delete
+    // Session cleanup is handled by server.js's disconnect event
     if (socket && !socket.connected) {
-      console.log(`Heartbeat detected stale socket for session ${sessionId}, cleaning up`)
-      deleteSession(sessionId)
+      console.log(`Heartbeat: socket for session ${sessionId} is disconnected (will be cleaned by disconnect handler)`)
     }
   }, HEARTBEAT_INTERVAL)
 
@@ -72,14 +73,8 @@ export function deleteSession(sessionId) {
   if (session) {
     // Clean up heartbeat interval if it exists
     if (session.heartbeat) clearInterval(session.heartbeat);
-    // Clean up socket connection if it exists
-    if (session.socket) {
-      try {
-        session.socket.disconnect();
-      } catch (e) {
-        // Socket might already be disconnected
-      }
-    }
+    // NOTE: Do NOT disconnect the socket here - each socket can have multiple sessions
+    // Socket disconnection is handled by Socket.IO's disconnect event in server.js
     try {
       session.pty.kill();
     } catch (e) {
