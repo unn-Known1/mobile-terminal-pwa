@@ -495,6 +495,9 @@ app.post('/api/file/rename', (req, res) => {
   try {
     const dir = path.dirname(oldPath)
     const newPath = path.join(dir, newName)
+    // CWE-22: Validate the constructed newPath to prevent path traversal
+    const newPathValidation = validatePath(newPath)
+    if (newPathValidation) return res.json(newPathValidation)
     if (fs.existsSync(newPath)) return res.json({ error: 'File already exists' })
     fs.renameSync(oldPath, newPath)
     res.json({ ok: true })
