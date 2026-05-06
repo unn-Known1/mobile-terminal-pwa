@@ -3,10 +3,6 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
-import { SerializeAddon } from '@xterm/addon-serialize'
-import { ImageAddon, parseImageFromContentURI } from '@xterm/addon-image'
 import '@xterm/xterm/css/xterm.css'
 import { useSocket } from '../hooks/useSocket'
 import { useCommandHistory } from '../hooks/useCommandHistory'
@@ -103,29 +99,11 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     // Load addons
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
-    const unicode11Addon = new Unicode11Addon()
-    const clipboardAddon = new ClipboardAddon({
-      copyOnSelection: true,
-      rightClickSelectsWord: true,
-    })
-    const serializeAddon = new SerializeAddon()
-    let imageAddon
-    try {
-      imageAddon = new ImageAddon()
-    } catch (e) {
-      console.log('Image addon not available')
-    }
+    const webLinksAddon = new WebLinksAddon()
 
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
-    term.loadAddon(unicode11Addon)
-    term.loadAddon(clipboardAddon)
-    term.loadAddon(serializeAddon)
-    if (imageAddon) term.loadAddon(imageAddon)
-
-    // Enable unicode 11
-    term.unicode.registerExtension(unicode11Addon)
-    term.unicode.activeVersion = '11'
+    term.loadAddon(webLinksAddon)
 
     term.open(containerRef.current)
 
