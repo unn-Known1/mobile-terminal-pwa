@@ -767,6 +767,18 @@ io.on('connection', (socket) => {
    // Optionally exit process: process.exit(1)
  })
 
- server.listen(PORT, HOST, () => {
-   console.log(`Server running on http://${HOST}:${PORT}`)
- })
+ // Start server with automatic port fallback
+ const startServer = (port) => {
+   server.listen(port, HOST, () => {
+     console.log(`Server running on http://${HOST}:${port}`)
+   }).on('error', (err) => {
+     if (err.code === 'EADDRINUSE') {
+       console.log(`Port ${port} is in use, trying ${port + 1}...`)
+       startServer(port + 1)
+     } else {
+       console.error('Server error:', err)
+     }
+   })
+ }
+
+ startServer(PORT)
