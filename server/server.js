@@ -1,7 +1,7 @@
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import { createSession, deleteSession, getSession, getAllSessions, listDirectory, recordSocketDisconnect } from './pty-manager.js'
+import { createSession, deleteSession, getSession, getAllSessions, listDirectory, recordSocketDisconnect, clearSocketDisconnect } from './pty-manager.js'
 import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -804,13 +804,12 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id)
   const socketSessions = new Set()
 
-  // Fix B03: Only reconnect sessions that belong to THIS socket
-  // Do NOT hijack sessions from other sockets
+  // FIX: Reconnect to existing sessions that have no active socket
+  // This allows sessions to survive disconnections and reconnections (e.g., tunnel)
   const existingSessions = getAllSessions()
   existingSessions.forEach(sessionId => {
     const existingSession = getSession(sessionId)
-    // Only reassign if session doesn't already have a socket, or has the same socket ID
-    // This prevents new clients from stealing existing sessions
+    // Check if session exists and PTY is still alive
     if (existingSession && existingSession.pty) {
       // Check if session has an exitCode (node-pty internal) safely
       let isExited = false
@@ -819,10 +818,13 @@ io.on('connection', (socket) => {
       } catch {}
 
       if (!isExited) {
-        // Only claim sessions that were created by this socket
+        // Reconnect if socket is null (disconnected but not killed yet)
+        // or if it's the same socket ID
         if (!existingSession.socketId || existingSession.socketId === socket.id) {
           existingSession.socket = socket
           existingSession.socketId = socket.id
+          // Clear disconnect time so reaper doesn't kill this session
+          clearSocketDisconnect(sessionId)
           console.log(`Reconnected session ${sessionId} to socket ${socket.id}`)
           socketSessions.add(sessionId)
         } else {
@@ -834,6 +836,29 @@ io.on('connection', (socket) => {
 
    // Create a PTY session for a tab
    socket.on('create-tab', ({ sessionId, cwd }) => {
+     // Check if session already exists
+     const existingSession = getSession(sessionId)
+     if (existingSession && existingSession.pty) {
+       // Check if PTY is still alive
+       let isExited = false
+       try {
+         isExited = existingSession.pty.exitCode !== null
+       } catch {}
+
+       if (!isExited) {
+         // Reconnect to existing session
+         existingSession.socket = socket
+         existingSession.socketId = socket.id
+         // Clear disconnect time so reaper doesn't kill this session
+         clearSocketDisconnect(sessionId)
+         socketSessions.add(sessionId)
+         socket.emit('session-ready', { sessionId, cwd: existingSession.cwd })
+         console.log(`Reconnected to existing session ${sessionId}`)
+         return
+       }
+     }
+
+     // Create new session
      const session = createSession(sessionId, socket, cwd)
      if (session) {
        socketSessions.add(sessionId)
@@ -903,11 +928,21 @@ io.on('connection', (socket) => {
   // Cleanup all sessions on disconnect
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id)
-    // Record disconnect time for each session so reaper can clean up orphaned ones
+    // FIX: Don't immediately kill PTY sessions on disconnect
+    // Instead, record disconnect time and let the session reaper handle cleanup
+    // This allows sessions to survive brief disconnections (like tunnel reconnections)
     for (const sid of socketSessions) {
       recordSocketDisconnect(sid)
     }
-    for (const sid of socketSessions) deleteSession(sid)
+    // Clear the socket reference from sessions so the reaper knows they're disconnected
+    // but DO NOT kill the PTY - it should stay alive for potential reconnection
+    for (const sid of socketSessions) {
+      const session = getSession(sid)
+      if (session) {
+        session.socket = null
+        session.socketId = null
+      }
+    }
     socketSessions.clear()
   })
  })
