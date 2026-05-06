@@ -11,13 +11,20 @@ let _latencyInterval = null
 
 function getSharedSocket(url) {
   if (!_socket) {
-    _socket = io(url, {
+    // In production (deployed), use current origin. In dev, use configured URL
+    const socketUrl = typeof window !== 'undefined' && !url.includes('localhost')
+      ? window.location.origin
+      : url
+
+    _socket = io(socketUrl, {
+      path: '/socket.io',
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 10000, // Increased from 5000
       reconnectionAttempts: Infinity,
       // Add exponential backoff factor
       randomizationFactor: 0.3,
+      transports: ['websocket', 'polling'],
     })
 
     // Listen for reconnection attempts
