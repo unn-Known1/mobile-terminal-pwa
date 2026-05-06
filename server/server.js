@@ -135,9 +135,34 @@ app.get('/api/ls', (req, res) => {
 
 app.get('/api/ls/*', (req, res) => {
   const pathParam = req.params[0] || ''
-  const targetPath = pathParam.startsWith('/') ? pathParam : '/' + pathParam
   const homeDir = process.env.HOME || '/home/' + process.env.USER
-  const resolvedPath = targetPath === '/' || targetPath === '//' ? homeDir : targetPath
+
+  // Build target path - disallow empty or absolute paths from param
+  let targetPath
+  if (!pathParam || pathParam.trim() === '') {
+    targetPath = homeDir
+  } else {
+    // Join with homeDir to create a safe base path
+    targetPath = path.join(homeDir, pathParam)
+  }
+
+  // Security fix: Use realpathSync to resolve ALL symlinks (including symlinks
+  // in intermediate directories) and ensure path stays within home directory
+  let resolvedPath
+  try {
+    resolvedPath = fs.realpathSync(targetPath)
+  } catch (err) {
+    // If path doesn't exist, use the resolved path without realpath
+    resolvedPath = path.resolve(targetPath)
+  }
+
+  const homeResolved = path.resolve(homeDir)
+  // Final check: resolved path must be within home directory
+  if (!resolvedPath.startsWith(homeResolved + path.sep) && resolvedPath !== homeResolved) {
+    console.warn(`[SECURITY] Path traversal attempt blocked: ${pathParam} -> ${resolvedPath}`)
+    return res.status(403).json({ error: 'Access denied: path outside home directory' })
+  }
+
   res.json(listDirectory(resolvedPath))
 })
 
@@ -405,17 +430,29 @@ app.post('/api/tunnel/verify', (req, res) => {
  // File operations
 function validatePath(filePath) {
   const homeDir = process.env.HOME || '/home/' + process.env.USER
-  // Resolve symlinks and normalize path before checking
-  const resolved = path.resolve(filePath)
   const homeResolved = path.resolve(homeDir)
-  // Also check if the resolved path would escape the home directory
-  if (!resolved.startsWith(homeResolved)) {
-    return { error: 'Access denied: path outside home directory' }
+
+  // Security fix: Use realpathSync to resolve ALL symlinks (including symlinks
+  // in intermediate directories) and prevent symlink traversal attacks
+  let resolved
+  try {
+    resolved = fs.realpathSync(filePath)
+  } catch (err) {
+    // If file doesn't exist yet, resolve the parent directory and validate
+    try {
+      const parentDir = path.dirname(filePath)
+      const resolvedParent = fs.realpathSync(parentDir)
+      resolved = path.join(resolvedParent, path.basename(filePath))
+    } catch {
+      // Parent doesn't exist - resolve without realpath
+      resolved = path.resolve(filePath)
+    }
   }
-  // Additional check: disallow parent directory references that might bypass startsWith
-  const normalized = path.normalize(resolved)
-  if (!normalized.startsWith(homeResolved)) {
-    return { error: 'Access denied: path traversal detected' }
+
+  // Final check: resolved path must be within home directory
+  // Use path.sep to ensure we match complete directory names
+  if (!resolved.startsWith(homeResolved + path.sep) && resolved !== homeResolved) {
+    return { error: 'Access denied: path outside home directory' }
   }
   return null
 }
