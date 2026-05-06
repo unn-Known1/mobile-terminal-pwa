@@ -9,30 +9,6 @@ import { useCommandHistory } from '../hooks/useCommandHistory'
 import MobileKeyboard from './MobileKeyboard'
 import ContextMenu from './ContextMenu'
 
-// Readline-like keyboard shortcuts
-const READLINE_SHORTCUTS = {
-  'ctrl-a': 'beginning-of-line',
-  'ctrl-e': 'end-of-line',
-  'ctrl-u': 'kill-whole-line',
-  'ctrl-k': 'kill-line',
-  'ctrl-w': 'unix-word-rubout',
-  'ctrl-y': 'yank',
-  'ctrl-l': 'clear-screen',
-  'ctrl-c': 'interrupt',
-  'ctrl-d': 'eof',
-  'ctrl-z': 'suspend',
-  'ctrl-r': 'reverse-search',
-  'ctrl-t': 'transpose-chars',
-  'alt-t': 'transpose-words',
-  'alt-f': 'forward-word',
-  'alt-b': 'backward-word',
-  'alt-d': 'kill-word',
-  'ctrl-left': 'backward-word',
-  'ctrl-right': 'forward-word',
-  'home': 'beginning-of-line',
-  'end': 'end-of-line',
-}
-
 export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, onStatusChange }) {
   const containerRef = useRef(null)
   const termRef = useRef(null)
@@ -42,7 +18,6 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   const clipboardRef = useRef(null)
   const searchInputRef = useRef(null)
 
-  const [lastActivity, setLastActivity] = useState(Date.now())
   const [connected, setConnected] = useState(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [showScrollHint, setShowScrollHint] = useState(false)
@@ -56,13 +31,21 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   const searchVisibleRef = useRef(false)
   const searchMatchesRef = useRef([])
 
+  // Refs to avoid stale closures
+  const socketRef = useRef(null)
+  const sessionIdRef = useRef(sessionId)
+  const addToHistoryRef = useRef(null)
+
   const { socket } = useSocket('/')
-  const { addToHistory, getPrevious, getNext } = useCommandHistory(sessionId)
-  const commandBufferRef = useRef('')
-  const yankBufferRef = useRef('')
+  const { addToHistory } = useCommandHistory(sessionId)
   const seqRef = useRef(0)
   const [contextMenu, setContextMenu] = useState(null)
   const lastClickRef = useRef({ time: 0, y: 0 })
+
+  // Update refs when props change
+  useEffect(() => { socketRef.current = socket }, [socket])
+  useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
+  useEffect(() => { addToHistoryRef.current = addToHistory }, [addToHistory])
 
   // Scroll handler defined at component level
   const handleScroll = useCallback(() => {
@@ -96,13 +79,8 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       macOptionIsMeta: true,
       disableStdin: false,
       cursorStyle: cursorStyle,
-      cursorWidth: cursorStyle === 'underline' ? undefined : undefined,
-      overviewRulerWidth: 0,
-      convertEol: true,
+      convertEol: false,
       termName: 'xterm-256color',
-      windowOptions: {
-        allowProposedApi: true,
-      },
       allowProposedApi: true,
     })
 
@@ -128,8 +106,8 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
         try {
           fitAddon.fit()
           // Send initial size
-          socket?.emit('resize', {
-            sessionId,
+          socketRef.current?.emit('resize', {
+            sessionId: sessionIdRef.current,
             cols: term.cols,
             rows: term.rows,
           })
@@ -140,11 +118,14 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     setTimeout(doFit, 200)
     setTimeout(doFit, 500)
 
+    // Store container reference for cleanup
+    const container = containerRef.current
+
     // Resize observer
     const ro = new ResizeObserver(() => {
       try { fitAddon.fit() } catch {}
     })
-    ro.observe(containerRef.current)
+    ro.observe(container)
 
     // Window resize
     const handleResize = () => {
@@ -161,57 +142,57 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
         y: e.clientY,
         selection: selection,
         hasSelection: selection.length > 0,
-        isLink: false, // Simplified for now
+        isLink: false,
       })
     }
-    containerRef.current.addEventListener('contextmenu', handleContextMenu)
+    container.addEventListener('contextmenu', handleContextMenu)
 
     // Mouse events for improved selection
     const handleMouseDown = (e) => {
-      // Triple click - select line
+      // Double click - select word (improved behavior)
       const now = Date.now()
       if (now - lastClickRef.current.time < 400) {
         const deltaY = Math.abs(e.clientY - lastClickRef.current.y)
         if (deltaY < 10) {
-          term.selectAll()
+          // Let xterm handle selection naturally
           lastClickRef.current = { time: 0, y: 0 }
           return
         }
       }
       lastClickRef.current = { time: now, y: e.clientY }
     }
-    containerRef.current.addEventListener('mousedown', handleMouseDown)
+    container.addEventListener('mousedown', handleMouseDown)
 
     // Bell handling - visual flash
-    term.onBell(() => {
-      containerRef.current?.classList.add('bell-flash')
-      setTimeout(() => containerRef.current?.classList.remove('bell-flash'), 150)
+    const bellDisposable = term.onBell(() => {
+      container.classList.add('bell-flash')
+      setTimeout(() => container.classList.remove('bell-flash'), 150)
     })
 
-    // Note: onHover/onHoverLeave removed - not available in current xterm version
-    // Link handling is handled by WebLinksAddon
+    // Keyboard shortcuts handler
+    const keyHandlerDisposable = term.attachCustomKeyEventHandler(e => {
+      const key = e.key.toLowerCase()
 
-    // Clear on Ctrl+L
-    term.attachCustomKeyEventHandler(e => {
-      if (e.type === 'keydown' && e.ctrlKey && e.key === 'l') {
-        term.clear()
+      // Ctrl+L - send clear to PTY instead of just clearing terminal
+      if (e.type === 'keydown' && e.ctrlKey && key === 'l') {
+        socketRef.current?.emit('data', {
+          sessionId: sessionIdRef.current,
+          data: '\x0c',  // Ctrl+L character
+          seq: seqRef.current++,
+        })
         return false
       }
 
-      // Ctrl+C - interrupt with visual feedback
-      if (e.type === 'keydown' && e.ctrlKey && e.key === 'c') {
-        // Let the default behavior pass through first, then send interrupt if needed
-      }
-
-      // Ctrl+F - open search
-      if (e.type === 'keydown' && e.ctrlKey && e.key === 'f') {
+      // Ctrl+F - open search (case insensitive)
+      if (e.type === 'keydown' && e.ctrlKey && key === 'f') {
         setIsSearchOpen(true)
+        searchVisibleRef.current = true
         setTimeout(() => searchInputRef.current?.focus(), 50)
         return false
       }
 
-      // Ctrl+Shift+C - copy (native copy)
-      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && e.key === 'C') {
+      // Ctrl+Shift+C / Ctrl+Shift+V - native copy/paste (case insensitive)
+      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && key === 'c') {
         const selection = term.getSelection()
         if (selection) {
           navigator.clipboard.writeText(selection).catch(() => {})
@@ -219,11 +200,14 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
         return false
       }
 
-      // Ctrl+Shift+V - paste (native paste)
-      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && e.key === 'V') {
+      if (e.type === 'keydown' && e.ctrlKey && e.shiftKey && key === 'v') {
         navigator.clipboard.readText().then(text => {
-          if (text && socket) {
-            socket.emit('data', { sessionId, data: text, seq: seqRef.current++ })
+          if (text && socketRef.current) {
+            socketRef.current.emit('data', {
+              sessionId: sessionIdRef.current,
+              data: text,
+              seq: seqRef.current++
+            })
           }
         }).catch(() => {})
         return false
@@ -232,40 +216,35 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       // Escape - close search
       if (e.type === 'keydown' && e.key === 'Escape' && searchVisibleRef.current) {
         setIsSearchOpen(false)
-        searchAddon.clearActiveSearchDecoration()
         searchVisibleRef.current = false
-        return false
-      }
-
-      // Enter in search - find next
-      if (e.type === 'keydown' && e.key === 'Enter' && searchVisibleRef.current) {
-        if (searchMatchesRef.current.length > 0) {
-          const nextIndex = (searchResults.index + 1) % searchMatchesRef.current.length
-          searchAddon.findNext(searchQuery)
-          updateSearchResults(searchAddon, searchQuery)
-        }
+        searchAddon.clearDecorations()
         return false
       }
 
       return true
     })
 
-    // Track command input for history
+    // Track command input for history and send to PTY
     let inputBuffer = ''
     let inputPosition = 0
 
-    term.onData(data => {
-      // Track input for proper history navigation
+    const dataDisposable = term.onData(data => {
+      // Send to PTY - this is critical!
+      socketRef.current?.emit('data', {
+        sessionId: sessionIdRef.current,
+        data,
+        seq: seqRef.current++,
+      })
+
+      // Track input for history
       if (data === '\r' || data === '\n') {
-        // Command submitted - add to history
         const cmd = inputBuffer.trim()
         if (cmd) {
-          addToHistory(cmd)
+          addToHistoryRef.current?.(cmd)
         }
         inputBuffer = ''
         inputPosition = 0
       } else if (data === '\x7f' || data === '\x08') {
-        // Backspace
         if (inputPosition > 0) {
           inputBuffer = inputBuffer.slice(0, -1)
           inputPosition--
@@ -280,13 +259,15 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     return () => {
       ro.disconnect()
       window.removeEventListener('resize', handleResize)
-      containerRef.current?.removeEventListener('contextmenu', handleContextMenu)
-      containerRef.current?.removeEventListener('mousedown', handleMouseDown)
+      container.removeEventListener('contextmenu', handleContextMenu)
+      container.removeEventListener('mousedown', handleMouseDown)
+      bellDisposable.dispose()
+      keyHandlerDisposable.dispose()
+      dataDisposable.dispose()
       term.dispose()
       termRef.current = null
       fitAddonRef.current = null
       searchAddonRef.current = null
-      clipboardRef.current = null
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -297,17 +278,11 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       return
     }
     try {
-      const result = addon.findNext(query, { decorations: true })
-      if (result) {
-        const matches = []
-        let next = addon.findNext(query, { decorations: true })
-        while (next && matches.length < 100) {
-          matches.push(next)
-          next = addon.findNext(query, { decorations: true })
-        }
-        setSearchResults({ index: 0, count: matches.length })
-        searchMatchesRef.current = matches
-      }
+      const found = addon.findNext(query, { decorations: true })
+      setSearchResults({
+        index: found ? 0 : -1,
+        count: found ? 1 : 0,
+      })
     } catch {}
   }, [])
 
@@ -331,6 +306,7 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     } else if (e.key === 'Escape') {
       setIsSearchOpen(false)
       searchVisibleRef.current = false
+      searchAddonRef.current?.clearDecorations()
     }
   }, [searchQuery, updateSearchResults])
 
@@ -356,7 +332,6 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     const onData = ({ sessionId: sid, data }) => {
       if (sid === sessionId) {
         term.write(data)
-        setLastActivity(Date.now())
         onStatusChange?.(sessionId, 'notification')
 
         // Auto-scroll to bottom
@@ -364,7 +339,7 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
           requestAnimationFrame(() => {
             scrollContainerRef.current?.scrollTo({
               top: scrollContainerRef.current.scrollHeight,
-              behavior: 'instant'
+              behavior: 'auto'
             })
           })
         }
@@ -517,7 +492,7 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
             className="search-close"
             onClick={() => {
               setIsSearchOpen(false)
-              searchAddonRef.current?.clearActiveSearchDecoration()
+              searchAddonRef.current?.clearDecorations()
             }}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
