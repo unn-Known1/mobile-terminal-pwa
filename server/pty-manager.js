@@ -24,10 +24,15 @@ export function createSession(sessionId, socket, cwd = null) {
     })
   } catch (err) {
     console.error('PTY spawn failed:', err)
-    socket?.emit('exit', { sessionId, error: err.message })
+    socket?.emit('error', { sessionId, error: err.message })
     return null
   }
 
+// Handle PTY errors
+  ptyProcess.on('error', (err) => {
+    console.error(`PTY error for session ${sessionId}:`, err.message);
+    socket?.emit('error', { sessionId, error: err.message });
+  });
   // Heartbeat to detect if socket connection is stale
   const heartbeat = setInterval(() => {
     if (socket && !socket.connected) {
@@ -45,11 +50,14 @@ export function createSession(sessionId, socket, cwd = null) {
   })
 
   ptyProcess.onExit(({ exitCode, signal }) => {
+    console.log(`PTY exited for session ${sessionId}: code=${exitCode}, signal=${signal}`);
     // Clean up heartbeat on PTY exit
-    if (session.heartbeat) clearInterval(session.heartbeat)
-    session.socket?.emit('exit', { sessionId, exitCode, signal })
-    sessions.delete(sessionId)
-  })
+    if (session.heartbeat) clearInterval(session.heartbeat);
+    // Notify all connected clients about the exit
+    session.socket?.emit('exit', { sessionId, exitCode, signal });
+    // Remove from sessions
+    sessions.delete(sessionId);
+  });
 
   return session
 }
@@ -59,12 +67,25 @@ export function getSession(sessionId) {
 }
 
 export function deleteSession(sessionId) {
-  const session = sessions.get(sessionId)
+  const session = sessions.get(sessionId);
   if (session) {
     // Clean up heartbeat interval if it exists
-    if (session.heartbeat) clearInterval(session.heartbeat)
-    try { session.pty.kill() } catch {}
-    sessions.delete(sessionId)
+    if (session.heartbeat) clearInterval(session.heartbeat);
+    // Clean up socket connection if it exists
+    if (session.socket) {
+      try {
+        session.socket.disconnect();
+      } catch (e) {
+        // Socket might already be disconnected
+      }
+    }
+    try {
+      session.pty.kill();
+    } catch (e) {
+      // PTY might already be dead
+    }
+    sessions.delete(sessionId);
+    console.log(`Session ${sessionId} cleaned up`);
   }
 }
 
