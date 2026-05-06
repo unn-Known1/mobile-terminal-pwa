@@ -15,29 +15,43 @@
       // Clean URL
       window.history.replaceState({}, document.title, '/');
     }
-    // Add token to cookie for all requests if we have a token
+    // High Fix #11: Improved fetch override - read token from sessionStorage on each request
+    // The original monkey-patch was permanent and couldn't be undone without reload
     (() => {
-      const storedToken = sessionStorage.getItem('tunnel-token');
-      if (storedToken) {
-        // Set cookie that will be sent with all requests
-        document.cookie = `tunnel_token=${storedToken}; path=/; SameSite=Strict`;
-        const originalFetch = window.fetch;
-        window.fetch = function(...args) {
-          const [url, options] = args;
+      // Don't override fetch in development where we're using relative URLs
+      // The backend handles auth via cookies in that case
+      if (window.location.hostname === 'localhost') {
+        // Still set cookie for development
+        const storedToken = sessionStorage.getItem('tunnel-token');
+        if (storedToken) {
+          document.cookie = `tunnel_token=${storedToken}; path=/; SameSite=Strict`;
+        }
+        return;
+      }
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = function(url, options = {}) {
+        // Read current token from sessionStorage on each fetch (not cached)
+        const currentToken = sessionStorage.getItem('tunnel-token');
+        if (currentToken) {
+          // Set cookie as well
+          document.cookie = `tunnel_token=${currentToken}; path=/; SameSite=Strict`;
+          // For relative URLs, add the header
           if (typeof url === 'string' && !url.startsWith('http')) {
             return originalFetch(url, {
               ...options,
               credentials: 'include',
-              headers: { ...options?.headers, 'x-tunnel-token': storedToken }
+              headers: { ...options.headers, 'x-tunnel-token': currentToken }
             });
           }
-          return originalFetch(...args);
-        };
-      }
+        }
+        return originalFetch(url, options);
+      };
     })();
-    // Service worker - only register if we have a token
-    if ('serviceWorker' in navigator && sessionStorage.getItem('tunnel-token')) {
-      navigator.serviceWorker.register('/sw.js');
+    // Service worker - register unconditionally for PWA support (Medium Fix #15)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(err => {
+        console.warn('Service worker registration failed:', err);
+      });
     }
   </script>
 </head>

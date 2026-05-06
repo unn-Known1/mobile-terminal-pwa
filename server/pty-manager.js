@@ -7,9 +7,83 @@ const shells = process.platform === 'win32' ? 'powershell.exe' : (os.userInfo().
 const sessions = new Map()
 const HEARTBEAT_INTERVAL = 30000 // 30 seconds heartbeat to detect stale connections
 
+// Critical Fix #2: Session Reaper - Kill orphaned PTY processes after socket disconnection
+const SESSION_REAP_INTERVAL = 60000 // Check every 60 seconds
+const SESSION_ORPHAN_TIMEOUT = 60000 // Consider session orphaned after 60 seconds of socket disconnect
+
+// Track when socket disconnected for each session
+const socketDisconnectTime = new Map()
+
+let reaperInterval = null
+
+function startSessionReaper() {
+  if (reaperInterval) return
+
+  reaperInterval = setInterval(() => {
+    const now = Date.now()
+    const toDelete = []
+
+    sessions.forEach((session, sessionId) => {
+      // Skip if session already has a connected socket
+      if (session.socket?.connected) {
+        socketDisconnectTime.delete(sessionId)
+        return
+      }
+
+      // Check if we recorded a disconnect time
+      const disconnectTime = socketDisconnectTime.get(sessionId)
+      if (!disconnectTime) {
+        // First time we see this session without a connected socket
+        socketDisconnectTime.set(sessionId, now)
+        return
+      }
+
+      // If orphaned for too long, mark for deletion
+      if (now - disconnectTime > SESSION_ORPHAN_TIMEOUT) {
+        console.log(`[Reaper] Session ${sessionId} orphaned for ${now - disconnectTime}ms, killing...`)
+        toDelete.push(sessionId)
+      }
+    })
+
+    // Clean up orphaned sessions
+    toDelete.forEach(sessionId => {
+      socketDisconnectTime.delete(sessionId)
+      deleteSession(sessionId)
+    })
+
+    if (toDelete.length > 0) {
+      console.log(`[Reaper] Cleaned up ${toDelete.length} orphaned sessions`)
+    }
+  }, SESSION_REAP_INTERVAL)
+
+  console.log('[Reaper] Session reaper started')
+}
+
+function stopSessionReaper() {
+  if (reaperInterval) {
+    clearInterval(reaperInterval)
+    reaperInterval = null
+    console.log('[Reaper] Session reaper stopped')
+  }
+}
+
+function recordSocketDisconnect(sessionId) {
+  socketDisconnectTime.set(sessionId, Date.now())
+}
+
+function clearSocketDisconnect(sessionId) {
+  socketDisconnectTime.delete(sessionId)
+}
+
 export function createSession(sessionId, socket, cwd = null) {
   // Kill existing session with same id
   if (sessions.has(sessionId)) deleteSession(sessionId)
+
+  // Start session reaper if not already running
+  startSessionReaper()
+
+  // Clear any disconnect tracking for this session
+  clearSocketDisconnect(sessionId)
 
   const workingDir = cwd || process.env.HOME || os.homedir()
 
@@ -90,6 +164,8 @@ export function deleteSession(sessionId) {
     sessions.delete(sessionId);
     console.log(`Session ${sessionId} cleaned up`);
   }
+  // Clear disconnect tracking
+  socketDisconnectTime.delete(sessionId)
 }
 
 export function getAllSessions() {

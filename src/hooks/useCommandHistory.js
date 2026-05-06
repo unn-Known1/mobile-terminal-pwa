@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 const STORAGE_KEY = 'terminal-command-history'
 const MAX_HISTORY = 1000
@@ -11,6 +11,12 @@ export function useCommandHistory(sessionId) {
     } catch { return [] }
   })
   const [historyIndex, setHistoryIndex] = useState(-1)
+
+  // Low Fix #26: Use ref to avoid stale closure in getPrevious/getNext
+  const historyRef = useRef(history)
+  useEffect(() => {
+    historyRef.current = history
+  }, [history])
 
   useEffect(() => {
     try {
@@ -48,22 +54,24 @@ export function useCommandHistory(sessionId) {
   }, [])
 
   const getPrevious = useCallback(() => {
-    if (history.length === 0) return null
-    if (historyIndex >= history.length - 1) return null
+    const currentHistory = historyRef.current
+    if (currentHistory.length === 0) return null
+    if (historyIndex >= currentHistory.length - 1) return null
     const newIndex = historyIndex + 1
     setHistoryIndex(newIndex)
-    return history[newIndex]
-  }, [history, historyIndex])
+    return currentHistory[newIndex]
+  }, [historyIndex]) // Only depend on index, use ref for history
 
   const getNext = useCallback(() => {
+    const currentHistory = historyRef.current
     if (historyIndex <= -1) return null
     const newIndex = historyIndex - 1
     setHistoryIndex(newIndex)
     if (newIndex >= 0) {
-      return history[newIndex]
+      return currentHistory[newIndex]
     }
     return null
-  }, [history, historyIndex])
+  }, [historyIndex]) // Only depend on index, use ref for history
 
   const clearHistory = useCallback(() => {
     setHistory([])

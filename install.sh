@@ -4,6 +4,7 @@
 # Or: curl -sL https://git.new/term | bash
 
 set -e
+set -o pipefail  # Critical Fix #5: Catch pipeline failures in build commands
 
 # Use absolute paths for safety
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

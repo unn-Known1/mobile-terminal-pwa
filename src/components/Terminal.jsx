@@ -47,6 +47,18 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
   useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
   useEffect(() => { addToHistoryRef.current = addToHistory }, [addToHistory])
 
+  // Critical Fix #4: Handle paste event from top-bar paste button
+  useEffect(() => {
+    const handlePasteEvent = (e) => {
+      const text = e.detail?.text
+      if (text && socket) {
+        socket.emit('data', { sessionId, data: text, seq: seqRef.current++ })
+      }
+    }
+    window.addEventListener('terminal-paste', handlePasteEvent)
+    return () => window.removeEventListener('terminal-paste', handlePasteEvent)
+  }, [socket, sessionId])
+
   // Scroll handler defined at component level
   const handleScroll = useCallback(() => {
     if (!scrollContainerRef.current) return
@@ -99,6 +111,10 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
     termRef.current = term
     fitAddonRef.current = fitAddon
     searchAddonRef.current = searchAddon
+
+    // Clear any existing terminal content when sessionId changes
+    // This prevents content leakage between sessions in split mode (Critical #3 fix)
+    term.clear()
 
     // Fit terminal
     const doFit = () => {
@@ -269,7 +285,7 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       fitAddonRef.current = null
       searchAddonRef.current = null
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId]) // Critical Fix #3: Added sessionId to dependencies to remount terminal when session changes
 
   // Search functions
   const updateSearchResults = useCallback((addon, query) => {

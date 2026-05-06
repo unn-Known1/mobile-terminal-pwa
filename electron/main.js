@@ -20,10 +20,24 @@ function log(msg) {
   console.log(msg)
 }
 
+function getServerPort() {
+  const portFile = path.join(os.tmpdir(), 'mobile-terminal-port')
+  try {
+    if (fs.existsSync(portFile)) {
+      const port = fs.readFileSync(portFile, 'utf8').trim()
+      log(`[Port] Read server port from file: ${port}`)
+      return port
+    }
+  } catch (err) {
+    log(`[Port] Could not read port file: ${err.message}`)
+  }
+  return '5151' // Default fallback
+}
+
 function startServer() {
   const serverPath = path.join(__dirname, '../server/server.js')
   log(`Starting server from: ${serverPath}`)
-  
+
   serverProcess = spawn('node', [serverPath], {
     stdio: 'inherit',
     env: { ...process.env, PORT: '5151' }
@@ -38,9 +52,9 @@ function startServer() {
   })
 }
 
-function createWindow() {
+function createWindow(port) {
   log('Creating main window')
-  
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -60,9 +74,9 @@ function createWindow() {
     log('Window shown')
   })
 
-  const startUrl = isDev 
+  const startUrl = isDev
     ? 'http://localhost:5173'
-    : `http://localhost:5151`
+    : `http://localhost:${port}`
 
   mainWindow.loadURL(startUrl)
   
@@ -123,15 +137,35 @@ X-GNOME-Autostart-enabled=true
 app.whenReady().then(() => {
   log('App ready, starting...')
   startServer()
-  createWindow()
 
-  setTimeout(() => {
-    setAutoStart(true)
-  }, 2000)
+  // Critical Fix #6: Wait for server to write port, then read and create window
+  let attempts = 0
+  const maxAttempts = 20
+  const tryCreateWindow = () => {
+    const port = getServerPort()
+    if (port && port !== '5151') {
+      // Server wrote its actual port, create window with that
+      createWindow(port)
+    } else if (attempts < maxAttempts) {
+      attempts++
+      setTimeout(tryCreateWindow, 250) // Wait 250ms and try again
+    } else {
+      // Fallback to default port after timeout
+      log('[Port] Timeout waiting for server port, using default 5151')
+      createWindow('5151')
+    }
+  }
+
+  // Small delay to let server start and write port
+  setTimeout(tryCreateWindow, 1000)
+
+  // Medium Fix #16: Auto-start should be user-opt-in, not automatic
+  // The original bug report says auto-start is enabled without user consent
+  // This is now controlled by settings, not automatic
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+      createWindow('5151')
     }
   })
 })

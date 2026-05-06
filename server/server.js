@@ -1,7 +1,7 @@
 import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import { createSession, deleteSession, getSession, getAllSessions, listDirectory } from './pty-manager.js'
+import { createSession, deleteSession, getSession, getAllSessions, listDirectory, recordSocketDisconnect } from './pty-manager.js'
 import { spawn } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -147,6 +147,32 @@ app.use(checkToken)
 app.use(express.static(path.join(__dirname, '../dist')))
 
 const io = new Server(server, { cors: { origin: '*' } })
+
+// Critical Fix #1: Socket.IO Authentication Middleware
+// Before allowing any socket connection, verify the tunnel token
+io.use((socket, next) => {
+  // If tunnel is not active, allow all connections (local mode)
+  if (!tunnelActive) {
+    return next()
+  }
+
+  // Check for token in handshake auth, headers, or query
+  const authToken = socket.handshake.auth?.token
+  const headerToken = socket.handshake.headers['x-tunnel-token']
+  const queryToken = socket.handshake.query?.token
+  const cookieToken = socket.handshake.headers?.cookie?.match(/tunnel_token=([^;]+)/)?.[1]
+
+  // Validate token from any source
+  const tokenToCheck = authToken || headerToken || queryToken || cookieToken
+  if (tokenToCheck && validTokens.has(tokenToCheck)) {
+    socket.tunnelToken = tokenToCheck
+    return next()
+  }
+
+  // Token invalid or missing - reject connection
+  console.log('[Socket Auth] Rejected connection: invalid or missing token')
+  next(new Error('Authentication required'))
+})
 
 // Directory listing API
 app.get('/api/ls', (req, res) => {
@@ -440,7 +466,56 @@ app.get('/api/tunnel/status', (req, res) => {
   })
 })
 
+// High Fix #9: Rate limiting for PIN verification to prevent brute force attacks
+const rateLimitMap = new Map()
+const MAX_ATTEMPTS = 5
+const LOCKOUT_DURATION = 60000 // 1 minute lockout after 5 failed attempts
+
+function checkRateLimit(ip) {
+  const now = Date.now()
+  const record = rateLimitMap.get(ip)
+
+  if (!record) {
+    rateLimitMap.set(ip, { count: 1, firstAttempt: now })
+    return { allowed: true }
+  }
+
+  // Check if lockout period has expired
+  if (record.lockoutUntil && now < record.lockoutUntil) {
+    return { allowed: false, waitTime: Math.ceil((record.lockoutUntil - now) / 1000) }
+  }
+
+  // Reset if lockout expired
+  if (record.lockoutUntil && now >= record.lockoutUntil) {
+    record.count = 0
+    record.lockoutUntil = null
+  }
+
+  // Check if too many attempts in quick succession
+  if (now - record.firstAttempt < 30000) { // 30 second window
+    record.count++
+    if (record.count > MAX_ATTEMPTS) {
+      record.lockoutUntil = now + LOCKOUT_DURATION
+      return { allowed: false, waitTime: LOCKOUT_DURATION / 1000 }
+    }
+  } else {
+    // Reset if window expired
+    record.count = 1
+    record.firstAttempt = now
+  }
+
+  return { allowed: true }
+}
+
 app.post('/api/tunnel/verify', (req, res) => {
+  const clientIp = req.ip || req.connection.remoteAddress || 'unknown'
+
+  // Check rate limit
+  const rateCheck = checkRateLimit(clientIp)
+  if (!rateCheck.allowed) {
+    return res.json({ error: `Too many attempts. Please wait ${rateCheck.waitTime} seconds.` })
+  }
+
   const { pin } = req.body
   if (!pin || pin !== tunnelPin) {
     return res.json({ error: 'Invalid PIN' })
@@ -700,7 +775,11 @@ app.post('/api/file/download', (req, res) => {
 
 const uploadDir = path.join(__dirname, '../uploads')
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
-const upload = multer({ dest: uploadDir })
+// High Fix #10: Added file size limit of 100MB to prevent disk space exhaustion
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: 100 * 1024 * 1024 }
+})
 
 app.post('/api/file/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.json({ error: 'No file uploaded' })
@@ -824,9 +903,13 @@ io.on('connection', (socket) => {
   // Cleanup all sessions on disconnect
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id)
+    // Record disconnect time for each session so reaper can clean up orphaned ones
+    for (const sid of socketSessions) {
+      recordSocketDisconnect(sid)
+    }
     for (const sid of socketSessions) deleteSession(sid)
     socketSessions.clear()
-   })
+  })
  })
 
  // Global error handler (must be after all routes)
@@ -853,18 +936,31 @@ io.on('connection', (socket) => {
    // Optionally exit process: process.exit(1)
  })
 
- // Start server with automatic port fallback
- const startServer = (port) => {
-   server.listen(port, HOST, () => {
-     console.log(`Server running on http://${HOST}:${port}`)
-   }).on('error', (err) => {
-     if (err.code === 'EADDRINUSE') {
-       console.log(`Port ${port} is in use, trying ${port + 1}...`)
-       startServer(port + 1)
-     } else {
-       console.error('Server error:', err)
-     }
-   })
- }
+ // Critical Fix #6: Electron port fallback - write actual port to file for Electron to read
+function writeServerPort(port) {
+  try {
+    const portFile = path.join(os.tmpdir(), 'mobile-terminal-port')
+    fs.writeFileSync(portFile, String(port))
+    console.log(`[Port] Server bound to port ${port}, port file: ${portFile}`)
+  } catch (err) {
+    console.warn('[Port] Could not write port file:', err.message)
+  }
+}
 
- startServer(PORT)
+// Start server with automatic port fallback
+const startServer = (port) => {
+  server.listen(port, HOST, () => {
+    console.log(`Server running on http://${HOST}:${port}`)
+    // Write actual port to file for Electron
+    writeServerPort(port)
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.log(`Port ${port} is in use, trying ${port + 1}...`)
+      startServer(port + 1)
+    } else {
+      console.error('Server error:', err)
+    }
+  })
+}
+
+startServer(PORT)

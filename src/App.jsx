@@ -31,6 +31,14 @@ function saveSession(tabs, activeTab, explorerOpen, currentPath) {
   } catch {}
 }
 
+function savePreferences(orientation) {
+  try {
+    const prefs = JSON.parse(localStorage.getItem('terminal-preferences') || '{}')
+    prefs.orientation = orientation
+    localStorage.setItem('terminal-preferences', JSON.stringify(prefs))
+  } catch {}
+}
+
 async function sendNotification(title, body) {
   if (!('Notification' in window)) return
   if (Notification.permission === 'granted') {
@@ -51,7 +59,13 @@ export default function App() {
   const [currentPath, setCurrentPath] = useState(() => loadSession().currentPath)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [splitMode, setSplitMode] = useState(false)
-  const [splitOrientation, setSplitOrientation] = useState('horizontal')
+  const [splitOrientation, setSplitOrientation] = useState(() => {
+    if (typeof window === 'undefined') return 'horizontal'
+    try {
+      const prefs = JSON.parse(localStorage.getItem('terminal-preferences') || '{}')
+      return prefs.orientation || 'horizontal'
+    } catch { return 'horizontal' }
+  })
   const [fontSize, setFontSize] = useState(14)
   const [theme, setTheme] = useState('dark')
   const [tabStatuses, setTabStatuses] = useState({})
@@ -70,7 +84,7 @@ export default function App() {
     }
   }, [tabs, activeTab, explorerOpen, currentPath])
 
-  const updateTabStatus = (sessionId, status) => {
+  const updateTabStatus = useCallback((sessionId, status) => {
     setTabStatuses(prev => {
       const newStatus = { ...prev, [sessionId]: status }
       const tab = tabs.find(t => t.id === sessionId)
@@ -87,7 +101,7 @@ export default function App() {
       }
       return newStatus
     })
-  }
+  }, [activeTab, tabs])
 
   const handleNewTab = (cwd = null, name = null, color = null) => {
     const id = 'tab-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
@@ -152,7 +166,11 @@ export default function App() {
              <>
                <button
                  className="icon-btn"
-                 onClick={() => setSplitOrientation(o => o === 'horizontal' ? 'vertical' : 'horizontal')}
+                 onClick={() => {
+                   const newOrientation = splitOrientation === 'horizontal' ? 'vertical' : 'horizontal'
+                   setSplitOrientation(newOrientation)
+                   savePreferences(newOrientation) // Low Fix #24: Persist orientation preference
+                 }}
                  title={`${splitOrientation === 'horizontal' ? 'Columns' : 'Rows'} view (Ctrl+\\)`}
                >
                  <Split size={18} className={splitOrientation === 'horizontal' ? '' : 'rotate-90'} />

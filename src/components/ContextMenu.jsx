@@ -5,7 +5,9 @@ export default function ContextMenu({ x, y, onCopy, onPaste, onSelectAll, onClos
   const menuRef = useRef(null)
 
   useEffect(() => {
-    if (!x || !y) return
+    // High Fix #7: Changed from `!x || !y` to proper undefined check
+    // 0 is a valid coordinate, but undefined means the position wasn't set
+    if (x === undefined || y === undefined) return
 
     // Adjust position if menu would go off-screen
     const menu = menuRef.current
