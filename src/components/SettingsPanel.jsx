@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { X, Copy, Minus, Plus, Keyboard, Command, ExternalLink, Check } from 'lucide-react'
 
 const THEMES = {
@@ -14,124 +14,219 @@ const THEMES = {
   nord: { label: 'Nord', background: '#2E3440', foreground: '#ECEFF4', cursor: '#88C0D0' },
 }
 
+// SSR-safe loadSettings
 function loadSettings() {
+  if (typeof window === 'undefined') {
+    return { fontSize: 14, theme: 'dark' }
+  }
+
   try {
     const s = JSON.parse(localStorage.getItem('terminal-settings') || '{}')
     return { fontSize: s.fontSize || 14, theme: s.theme || 'dark' }
-  } catch { return { fontSize: 14, theme: 'dark' } }
+  } catch {
+    return { fontSize: 14, theme: 'dark' }
+  }
 }
 
+// SSR-safe saveSettings
 function saveSettings(s) {
-  try { localStorage.setItem('terminal-settings', JSON.stringify(s)) } catch {}
+  if (typeof window === 'undefined') return
+
+  try {
+    localStorage.setItem('terminal-settings', JSON.stringify(s))
+  } catch {}
+}
+
+// Safe JSON parse helper
+const safeParse = (key, fallback) => {
+  if (typeof window === 'undefined') return fallback
+
+  try {
+    const val = localStorage.getItem(key)
+    return val ? JSON.parse(val) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+// Safe URL validator
+const isSafeUrl = (url) => {
+  if (!url) return false
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+// Normalize font size from import
+const normalizeFontSize = (value) => {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 14
+  return Math.min(28, Math.max(10, n))
+}
+
+// Validate filename for shortcuts
+const validateFilename = (name) => {
+  if (!name?.trim()) return 'Name cannot be empty'
+  if (name.includes('/')) return 'Name cannot contain /'
+  if (name === '.' || name === '..') return 'Invalid name'
+  return null
+}
+
+// API response parser
+const parseApiResponse = async (res) => {
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `HTTP ${res.status}`)
+  }
+  return data
 }
 
 export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThemeChange }) {
-  const initial = loadSettings()
-  const [fontSize, setFontSize] = useState(initial.fontSize)
-  const [theme, setTheme] = useState(initial.theme)
+  // Use lazy state initialization (Issue #1 fix)
+  const [fontSize, setFontSize] = useState(() => loadSettings().fontSize)
+  const [theme, setTheme] = useState(() => loadSettings().theme)
   const [tunnelStatus, setTunnelStatus] = useState('disconnected')
   const [tunnelUrl, setTunnelUrl] = useState('')
   const [tunnelPin, setTunnelPin] = useState('')
-  const [copied, setCopied] = useState(false)
 
-   // Check tunnel status on mount and poll while panel is open
-   useEffect(() => {
-     const fetchStatus = () => {
-       fetch('/api/tunnel/status')
-         .then(r => r.json())
-         .then(data => {
-           if (data.running && data.url) {
-             setTunnelUrl(data.url)
-             setTunnelPin(data.pin)
-             setTunnelStatus('connected')
-           } else if (tunnelStatus !== 'starting') {
-             setTunnelStatus('disconnected')
-             setTunnelUrl('')
-             setTunnelPin('')
-           }
-         })
-         .catch(() => {
-           console.error('Failed to fetch tunnel status')
-         })
-     }
+  // Separate copied states for URL and PIN (Issue #7 fix)
+  const [copiedField, setCopiedField] = useState(null)
 
-     fetchStatus()
-     
-     // If panel is open, poll status every 2 seconds
-     let intervalId = null
-     if (isOpen) {
-       intervalId = setInterval(fetchStatus, 2000)
-     }
+  // Notification state with controlled inputs (Issue #9 fix)
+  const [notifications, setNotifications] = useState(() => {
+    if (typeof window === 'undefined') return {}
+    try {
+      return JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
+    } catch {
+      return {}
+    }
+  })
 
-     return () => {
-       if (intervalId) clearInterval(intervalId)
-     }
-   }, [isOpen, tunnelStatus])
+  // Shortcuts state with SSR safety (Issue #12 fix for IDs)
+  const [shortcuts, setShortcuts] = useState(() => safeParse('terminal-shortcuts', []))
 
-   // Check for existing tunnel token
-   useEffect(() => {
-     const storedToken = sessionStorage.getItem('tunnel-token')
-     if (storedToken) {
-       fetch('/api/tunnel/verify-token', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({ token: storedToken })
-       }).then(r => r.json()).then(data => {
-         if (!data.valid) {
-           sessionStorage.removeItem('tunnel-token')
-         }
-       }).catch(() => {})
-     }
-   }, [])
+  // Command history state with SSR safety
+  const [commandHistory, setCommandHistory] = useState(() => safeParse('terminal-command-history', []))
 
-  // Apply saved settings on mount
+  // Combined settings ref for effect (Issue #1, #10 fix)
+  const settingsRef = useRef({ fontSize: loadSettings().fontSize, theme: loadSettings().theme })
+
+  // Tunnel polling effect with proper dependencies (Issue #3 fix)
   useEffect(() => {
-    onFontSizeChange(initial.fontSize)
-    onThemeChange(initial.theme)
-  }, [initial.fontSize, initial.theme, onFontSizeChange, onThemeChange])
+    if (!isOpen) return
+
+    let cancelled = false
+
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/tunnel/status')
+        const data = await res.json().catch(() => ({}))
+
+        if (cancelled) return
+
+        if (data.running && data.url) {
+          setTunnelUrl(data.url)
+          setTunnelPin(data.pin || '')
+          setTunnelStatus('connected')
+        } else {
+          setTunnelStatus(prev => {
+            if (prev === 'starting') return prev
+            setTunnelUrl('')
+            setTunnelPin('')
+            return 'disconnected'
+          })
+        }
+      } catch {
+        if (!cancelled) {
+          console.error('Failed to fetch tunnel status')
+        }
+      }
+    }
+
+    fetchStatus()
+    const intervalId = setInterval(fetchStatus, 2000)
+
+    return () => {
+      cancelled = true
+      clearInterval(intervalId)
+    }
+  }, [isOpen]) // Only depends on isOpen, not tunnelStatus
+
+  // Check for existing tunnel token (Issue #2 SSR safety)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const storedToken = sessionStorage.getItem('tunnel-token')
+    if (!storedToken) return
+
+    fetch('/api/tunnel/verify-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: storedToken })
+    })
+      .then(r => r.json().catch(() => ({})))
+      .then(data => {
+        if (!data.valid) {
+          sessionStorage.removeItem('tunnel-token')
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // Apply saved settings on mount (using refs to avoid stale closure)
+  useEffect(() => {
+    settingsRef.current = { fontSize, theme }
+    onFontSizeChange?.(fontSize)
+    onThemeChange?.(theme)
+  }, [fontSize, theme, onFontSizeChange, onThemeChange])
+
+  // Listen for command history updates from same tab (Issue #10 fix)
+  useEffect(() => {
+    const handleStorage = () => {
+      setCommandHistory(safeParse('terminal-command-history', []))
+    }
+
+    const handleCustomEvent = () => {
+      setCommandHistory(safeParse('terminal-command-history', []))
+    }
+
+    window.addEventListener('storage', handleStorage)
+    window.addEventListener('terminal-command-history-updated', handleCustomEvent)
+
+    return () => {
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener('terminal-command-history-updated', handleCustomEvent)
+    }
+  }, [])
 
   const changeFontSize = (s) => {
     setFontSize(s)
-    onFontSizeChange(s)
+    settingsRef.current.fontSize = s
+    onFontSizeChange?.(s)
     saveSettings({ fontSize: s, theme })
   }
 
   const changeTheme = (t) => {
     setTheme(t)
-    onThemeChange(t)
+    settingsRef.current.theme = t
+    onThemeChange?.(t)
     saveSettings({ fontSize, theme: t })
   }
-
-  // Shortcuts state
-  const [shortcuts, setShortcuts] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('terminal-shortcuts') || '[]') } 
-    catch { return [] }
-  })
-
-  // Command history state
-  const [commandHistory, setCommandHistory] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('terminal-command-history') || '[]')
-    } catch { return [] }
-  })
-
-  useEffect(() => {
-    const handleStorage = () => {
-      try {
-        setCommandHistory(JSON.parse(localStorage.getItem('terminal-command-history') || '[]'))
-      } catch {}
-    }
-    window.addEventListener('storage', handleStorage)
-    return () => window.removeEventListener('storage', handleStorage)
-  }, [])
 
   const clearCommandHistory = () => {
     localStorage.removeItem('terminal-command-history')
     setCommandHistory([])
+    // Notify other components (Issue #11 fix)
+    window.dispatchEvent(new Event('terminal-command-history-updated'))
   }
 
+  // Use crypto.randomUUID for IDs (Issue #12 fix)
   const addShortcut = (s) => {
-    const newShortcuts = [...shortcuts, { ...s, id: Date.now().toString() }]
+    const id = crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
+    const newShortcuts = [...shortcuts, { ...s, id }]
     setShortcuts(newShortcuts)
     localStorage.setItem('terminal-shortcuts', JSON.stringify(newShortcuts))
   }
@@ -142,13 +237,13 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
     localStorage.setItem('terminal-shortcuts', JSON.stringify(newShortcuts))
   }
 
-  // Export/Import
+  // Export with safe JSON parsing (Issue #14 fix)
   const handleExport = () => {
     const settings = {
       version: '2.0',
       exportedAt: new Date().toISOString(),
-      bookmarks: JSON.parse(localStorage.getItem('terminal-bookmarks') || '[]'),
-      shortcuts: JSON.parse(localStorage.getItem('terminal-shortcuts') || '[]'),
+      bookmarks: safeParse('terminal-bookmarks', []),
+      shortcuts: safeParse('terminal-shortcuts', []),
       settings: { fontSize, theme }
     }
     const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' })
@@ -156,79 +251,155 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
     const a = document.createElement('a')
     a.href = url
     a.download = `terminal-settings-${Date.now()}.json`
+    // Append to DOM for better browser compatibility (Issue #15 fix)
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(url)
+    a.remove()
+    // Revoke after a tick to ensure download completes
+    setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 
   const handleImport = () => {
     const input = document.createElement('input')
     input.type = 'file'
-    input.id = 'settings-import'
-    input.name = 'settings-import'
     input.accept = '.json'
+
     input.onchange = async (e) => {
       const file = e.target.files?.[0]
-      if (!file) return
+      if (!file) {
+        input.remove()
+        return
+      }
+
       try {
         const text = await file.text()
         const data = JSON.parse(text)
+
         if (!data.version) throw new Error('Invalid settings file')
-        if (data.bookmarks) {
+
+        // Validate and import bookmarks (Issue #19 fix)
+        if (Array.isArray(data.bookmarks)) {
           localStorage.setItem('terminal-bookmarks', JSON.stringify(data.bookmarks))
         }
-        if (data.shortcuts) {
+
+        // Validate and import shortcuts (Issue #19 fix)
+        if (Array.isArray(data.shortcuts)) {
           localStorage.setItem('terminal-shortcuts', JSON.stringify(data.shortcuts))
           setShortcuts(data.shortcuts)
         }
+
+        // Import settings with validation (Issue #17, #18, #20 fix)
         if (data.settings) {
-          if (data.settings.fontSize) {
-            setFontSize(data.settings.fontSize)
-            onFontSizeChange(data.settings.fontSize)
-          }
-          if (data.settings.theme) {
-            setTheme(data.settings.theme)
-            onThemeChange(data.settings.theme)
-          }
-          saveSettings(data.settings)
+          const importedFontSize = data.settings.fontSize
+            ? normalizeFontSize(data.settings.fontSize)
+            : fontSize
+
+          const importedTheme = THEMES[data.settings.theme]
+            ? data.settings.theme
+            : theme
+
+          setFontSize(importedFontSize)
+          setTheme(importedTheme)
+          settingsRef.current = { fontSize: importedFontSize, theme: importedTheme }
+
+          onFontSizeChange?.(importedFontSize)
+          onThemeChange?.(importedTheme)
+
+          saveSettings({
+            fontSize: importedFontSize,
+            theme: importedTheme
+          })
         }
+
         alert('Settings imported successfully!')
       } catch (err) {
         alert('Failed to import: ' + err.message)
+      } finally {
+        // Clean up input element (Issue #16 fix)
+        input.remove()
       }
     }
+
     input.click()
   }
 
+  // Start tunnel with res.ok check (Issue #4, #5 fix)
   const handleStartTunnel = async () => {
     setTunnelStatus('starting')
+
     try {
       const res = await fetch('/api/tunnel/start', { method: 'POST' })
-      const data = await res.json()
-      if (data.url) {
-        setTunnelUrl(data.url)
-        setTunnelPin(data.pin)
-        setTunnelStatus('connected')
-      } else {
-        setTunnelStatus('disconnected')
-        alert(data.error || 'Failed to start tunnel')
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok || !data.url) {
+        throw new Error(data.error || `HTTP ${res.status}`)
       }
-    } catch {
+
+      setTunnelUrl(data.url)
+      setTunnelPin(data.pin || '')
+      setTunnelStatus('connected')
+    } catch (err) {
       setTunnelStatus('disconnected')
-      alert('Could not connect to tunnel service')
+      alert(err.message || 'Could not connect to tunnel service')
     }
   }
 
+  // Stop tunnel with res.ok check, clear PIN (Issue #6 fix)
   const handleStopTunnel = async () => {
-    try { await fetch('/api/tunnel/stop', { method: 'POST' }) } catch {}
+    try {
+      const res = await fetch('/api/tunnel/stop', { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+    } catch (err) {
+      console.error('Failed to stop tunnel:', err)
+    }
+
     setTunnelStatus('disconnected')
     setTunnelUrl('')
+    setTunnelPin('')
   }
 
-  const handleCopyUrl = () => {
-    navigator.clipboard.writeText(tunnelUrl).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
+  // Copy with error handling and empty URL check (Issue #8, #23 fix)
+  const copyText = async (text, field) => {
+    if (!text) return
+    if (!navigator.clipboard) {
+      alert('Clipboard API is not available')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedField(field)
+      setTimeout(() => setCopiedField(null), 2000)
+    } catch {
+      alert('Failed to copy to clipboard')
+    }
+  }
+
+  // Update notification with controlled state (Issue #9 fix)
+  const updateNotification = (key, checked) => {
+    if (typeof window === 'undefined') return
+
+    const next = {
+      longRunning: notifications.longRunning ?? true,
+      idle: notifications.idle ?? true,
+      background: notifications.background ?? true,
+      failed: notifications.failed ?? true,
+      [key]: checked,
+    }
+
+    setNotifications(next)
+    localStorage.setItem('terminal-notifications', JSON.stringify(next))
+  }
+
+  // Normalize notification values
+  const notificationSettings = {
+    longRunning: notifications.longRunning ?? true,
+    idle: notifications.idle ?? true,
+    background: notifications.background ?? true,
+    failed: notifications.failed ?? true,
   }
 
   if (!isOpen) return null
@@ -282,7 +453,14 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
             const name = prompt('Shortcut name:')
             const keys = prompt('Key combination (e.g., Ctrl+Shift+G):')
             const command = prompt('Command to run:')
-            if (name && keys && command) addShortcut({ name, keys, command })
+            // Trim and validate (Issue #13 fix)
+            const trimmedName = name?.trim()
+            const trimmedKeys = keys?.trim()
+            const trimmedCommand = command?.trim()
+
+            if (trimmedName && trimmedKeys && trimmedCommand) {
+              addShortcut({ name: trimmedName, keys: trimmedKeys, command: trimmedCommand })
+            }
           }}>+ Add Shortcut</button>
         </div>
 
@@ -312,27 +490,25 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
             <>
               <div className="tunnel-url">
                 <input type="text" id="tunnel-url" name="tunnel-url" value={tunnelUrl} readOnly aria-label="Tunnel URL" />
-                <button className="copy-btn" onClick={handleCopyUrl} aria-label="Copy URL">
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                <button className="copy-btn" onClick={() => copyText(tunnelUrl, 'url')} aria-label="Copy URL">
+                  {copiedField === 'url' ? <Check size={14} /> : <Copy size={14} />}
                 </button>
               </div>
               {tunnelPin && (
                 <div className="tunnel-pin">
                   <span className="pin-label">PIN:</span>
                   <span className="pin-value">{tunnelPin}</span>
-                  <button className="copy-btn" onClick={() => {
-                    navigator.clipboard.writeText(tunnelPin).then(() => {
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
-                    })
-                  }} aria-label="Copy PIN">
-                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                  <button className="copy-btn" onClick={() => copyText(tunnelPin, 'pin')} aria-label="Copy PIN">
+                    {copiedField === 'pin' ? <Check size={14} /> : <Copy size={14} />}
                   </button>
                 </div>
               )}
-              <a href={tunnelUrl} target="_blank" rel="noopener noreferrer" className="tunnel-link">
-                <ExternalLink size={13} /> Open in browser
-              </a>
+              {/* Safe URL validation before rendering link (Issue #24 fix) */}
+              {isSafeUrl(tunnelUrl) && (
+                <a href={tunnelUrl} target="_blank" rel="noopener noreferrer" className="tunnel-link">
+                  <ExternalLink size={13} /> Open in browser
+                </a>
+              )}
               <button className="tunnel-btn stop" onClick={handleStopTunnel}>Stop Tunnel</button>
             </>
           )}
@@ -368,38 +544,47 @@ export default function SettingsPanel({ isOpen, onClose, onFontSizeChange, onThe
           <h3>Notifications</h3>
           <div className="setting-item">
             <label htmlFor="notif-long-running">
-              <input type="checkbox" id="notif-long-running" name="notif-long-running" onChange={() => {
-                const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
-                s.longRunning = !s.longRunning
-                localStorage.setItem('terminal-notifications', JSON.stringify(s))
-              }} defaultChecked /> Long-running commands done
+              {/* Controlled checkbox state (Issue #9 fix) */}
+              <input
+                type="checkbox"
+                id="notif-long-running"
+                name="notif-long-running"
+                checked={notificationSettings.longRunning}
+                onChange={(e) => updateNotification('longRunning', e.target.checked)}
+              /> Long-running commands done
             </label>
           </div>
           <div className="setting-item">
             <label htmlFor="notif-idle">
-              <input type="checkbox" id="notif-idle" name="notif-idle" onChange={() => {
-                const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
-                s.idle = !s.idle
-                localStorage.setItem('terminal-notifications', JSON.stringify(s))
-              }} defaultChecked /> Tab idle (60s no activity)
+              <input
+                type="checkbox"
+                id="notif-idle"
+                name="notif-idle"
+                checked={notificationSettings.idle}
+                onChange={(e) => updateNotification('idle', e.target.checked)}
+              /> Tab idle (60s no activity)
             </label>
           </div>
           <div className="setting-item">
             <label htmlFor="notif-background">
-              <input type="checkbox" id="notif-background" name="notif-background" onChange={() => {
-                const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
-                s.background = !s.background
-                localStorage.setItem('terminal-notifications', JSON.stringify(s))
-              }} defaultChecked /> Background tab output
+              <input
+                type="checkbox"
+                id="notif-background"
+                name="notif-background"
+                checked={notificationSettings.background}
+                onChange={(e) => updateNotification('background', e.target.checked)}
+              /> Background tab output
             </label>
           </div>
           <div className="setting-item">
             <label htmlFor="notif-failed">
-              <input type="checkbox" id="notif-failed" name="notif-failed" onChange={() => {
-                const s = JSON.parse(localStorage.getItem('terminal-notifications') || '{}')
-                s.failed = !s.failed
-                localStorage.setItem('terminal-notifications', JSON.stringify(s))
-              }} defaultChecked /> Command failed (non-zero exit)
+              <input
+                type="checkbox"
+                id="notif-failed"
+                name="notif-failed"
+                checked={notificationSettings.failed}
+                onChange={(e) => updateNotification('failed', e.target.checked)}
+              /> Command failed (non-zero exit)
             </label>
           </div>
         </div>
