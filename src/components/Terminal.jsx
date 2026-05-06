@@ -188,23 +188,8 @@ export default function Terminal({ sessionId, cwd = null, fontSize = 14, theme, 
       setTimeout(() => containerRef.current?.classList.remove('bell-flash'), 150)
     })
 
-    // Link handling
-    let hoveredCellRef = null
-    let tooltipTimeoutRef = null
-
-    term.onHover((event) => {
-      if (event.uri) {
-        hoveredCellRef = event
-        tooltipTimeoutRef = setTimeout(() => {
-          // Could show URL preview tooltip
-        }, 200)
-      }
-    })
-
-    term.onHoverLeave(() => {
-      clearTimeout(tooltipTimeoutRef)
-      hoveredCellRef = null
-    })
+    // Note: onHover/onHoverLeave removed - not available in current xterm version
+    // Link handling is handled by WebLinksAddon
 
     // Clear on Ctrl+L
     term.attachCustomKeyEventHandler(e => {
